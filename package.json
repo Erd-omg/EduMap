@@ -1,0 +1,18 @@
+{
+  "name": "edumap",
+  "version": "0.1.0",
+  "private": true,
+  "description": "EduMap — Multi-agent personalized learning system for higher education",
+  "scripts": {
+    "dev": "pnpm --parallel -r run dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "clean": "pnpm -r run clean",
+    "format": "prettier --write '**/*.{ts,tsx,json,md}'"
+  },
+  "engines": {
+    "node": ">=18.17.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@9.1.0"
+}

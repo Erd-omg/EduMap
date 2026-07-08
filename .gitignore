@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+.next/
+dist/
+build/
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.log
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+.sandbox/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# TypeScript
+*.tsbuildinfo
