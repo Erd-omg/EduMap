@@ -45,6 +45,11 @@
       "path": "assessment/v1-micro-quiz.md",
       "agent_id": "assessment",
       "description": "生成微测验题目"
+    },
+    "mentor/v1-mentor": {
+      "path": "mentor/v1-mentor.md",
+      "agent_id": "mentor",
+      "description": "RAG 约束的学习问答导师"
     }
   }
 }

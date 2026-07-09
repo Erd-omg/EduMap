@@ -33,6 +33,26 @@ async def lifespan(app: FastAPI):
     path_service = PathService(kp_repo=kp_repo, edge_repo=edge_repo)
     app.state.path_service = path_service
 
+    # ── RAG service + Mentor agent ──────────────────────────────────────
+    from src.kg.vector_index import VectorIndex
+    from src.rag.rag_service import RAGRetrievalService
+    from src.agents.mentor.agent import MentorAgent
+
+    vector_index: VectorIndex | None = None
+    try:
+        vector_index = VectorIndex(host=settings.chroma_host, port=8000)
+    except Exception:
+        pass
+
+    rag_service = RAGRetrievalService(
+        vector_index=vector_index,
+        kp_repo=kp_repo,
+    )
+    app.state.rag_service = rag_service
+
+    mentor_agent = MentorAgent(llm_adapter=llm, rag_service=rag_service)
+    app.state.mentor_agent = mentor_agent
+
     # ── Configure agents + orchestrator graph ───────────────────────────
     _configure_agents(app, pool, llm)
 
@@ -99,6 +119,10 @@ app.include_router(orchestrator_router)
 from src.learning_path.router import router as learning_path_router
 app.include_router(learning_path_router)
 
+# Register the mentor / RAG router
+from src.rag.router import router as mentor_router
+app.include_router(mentor_router)
+
 
 @app.get("/health")
 async def health():
@@ -119,6 +143,6 @@ async def readiness():
             "coder": "ready",
             "assessment": "ready",
             "content_auditor": "ready",
-            "mentor": "not_implemented",
+            "mentor": "ready",
         },
     }
