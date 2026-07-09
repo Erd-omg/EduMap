@@ -23,6 +23,16 @@ async def lifespan(app: FastAPI):
     llm = create_llm(settings)
     app.state.llm_adapter = llm
 
+    # ── Learning Path service ───────────────────────────────────────────
+    from src.kg.repositories.knowledge_point_repo import KnowledgePointRepository
+    from src.kg.repositories.edge_repo import EdgeRepository
+    from src.learning_path.path_service import PathService
+
+    kp_repo = KnowledgePointRepository(pool)
+    edge_repo = EdgeRepository(pool)
+    path_service = PathService(kp_repo=kp_repo, edge_repo=edge_repo)
+    app.state.path_service = path_service
+
     # ── Configure agents + orchestrator graph ───────────────────────────
     _configure_agents(app, pool, llm)
 
@@ -84,6 +94,10 @@ app.include_router(kg_router)
 # Register the orchestrator router (lazy-import to avoid circular deps)
 from src.agents.orchestrator.router import router as orchestrator_router
 app.include_router(orchestrator_router)
+
+# Register the learning path router
+from src.learning_path.router import router as learning_path_router
+app.include_router(learning_path_router)
 
 
 @app.get("/health")

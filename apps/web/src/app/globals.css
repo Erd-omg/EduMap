@@ -8,3 +8,8 @@
   --color-surface: #f8fafc;
   --color-surface-dark: #0f172a;
 }
+
+@keyframes pulse-anim {
+  0%, 100% { r: attr(r); filter: drop-shadow(0 0 2px rgba(249, 115, 22, 0.6)); }
+  50% { filter: drop-shadow(0 0 8px rgba(249, 115, 22, 0.9)); }
+}
