@@ -1,8 +1,14 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+interface SSENamedEvent {
+  event: string;
+  data: string;
+}
+
 interface SSEOptions {
   onMessage?: (data: string) => void;
+  onEvent?: (event: SSENamedEvent) => void;
   onError?: (error: Event) => void;
   autoConnect?: boolean;
 }
@@ -13,8 +19,21 @@ interface SSEState {
   isConnected: boolean;
 }
 
+/** List of event names the orchestrator SSE stream may emit. */
+const ORCHESTRATOR_EVENTS = [
+  'phase_change',
+  'agent_start',
+  'agent_complete',
+  'agent_error',
+  'audit_result',
+  'resource_generated',
+  'workflow_complete',
+  'workflow_error',
+  'heartbeat',
+] as const;
+
 export function useSSE(url: string, options: SSEOptions = {}) {
-  const { onMessage, onError, autoConnect = true } = options;
+  const { onMessage, onEvent, onError, autoConnect = true } = options;
   const [state, setState] = useState<SSEState>({
     data: null,
     error: null,
@@ -31,6 +50,15 @@ export function useSSE(url: string, options: SSEOptions = {}) {
 
     const es = new EventSource(url);
     eventSourceRef.current = es;
+
+    // Named event listeners (orchestrator streaming)
+    if (onEvent) {
+      for (const eventName of ORCHESTRATOR_EVENTS) {
+        es.addEventListener(eventName, ((event: MessageEvent) => {
+          onEvent({ event: eventName, data: event.data });
+        }) as EventListener);
+      }
+    }
 
     es.onopen = () => {
       retryRef.current = 0;
@@ -53,7 +81,7 @@ export function useSSE(url: string, options: SSEOptions = {}) {
         setTimeout(() => connect(), delay);
       }
     };
-  }, [url, onMessage, onError]);
+  }, [url, onMessage, onEvent, onError]);
 
   const disconnect = useCallback(() => {
     eventSourceRef.current?.close();

@@ -1,4 +1,50 @@
 {
   "version": "1",
-  "prompts": {}
+  "prompts": {
+    "planner/v1-extract": {
+      "path": "planner/v1-extract.md",
+      "agent_id": "planner",
+      "description": "从用户输入中提取知识点结构"
+    },
+    "guardian/v1-validate": {
+      "path": "guardian/v1-validate.md",
+      "agent_id": "guardian",
+      "description": "验证知识结构合法性"
+    },
+    "designer/v1-explanation": {
+      "path": "designer/v1-explanation.md",
+      "agent_id": "designer",
+      "description": "生成知识点讲解文档"
+    },
+    "designer/v1-exercise": {
+      "path": "designer/v1-exercise.md",
+      "agent_id": "designer",
+      "description": "生成分层练习题"
+    },
+    "designer/v1-visualization": {
+      "path": "designer/v1-visualization.md",
+      "agent_id": "designer",
+      "description": "生成思维导图/可视化"
+    },
+    "coder/v1-generate": {
+      "path": "coder/v1-generate.md",
+      "agent_id": "coder",
+      "description": "生成代码示例"
+    },
+    "coder/v1-fix": {
+      "path": "coder/v1-fix.md",
+      "agent_id": "coder",
+      "description": "根据错误信息修复代码"
+    },
+    "content-auditor/v1-audit": {
+      "path": "content-auditor/v1-audit.md",
+      "agent_id": "content_auditor",
+      "description": "审核生成内容质量"
+    },
+    "assessment/v1-micro-quiz": {
+      "path": "assessment/v1-micro-quiz.md",
+      "agent_id": "assessment",
+      "description": "生成微测验题目"
+    }
+  }
 }

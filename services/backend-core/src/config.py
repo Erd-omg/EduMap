@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     llm_api_base: str = ""
     llm_model: str = "spark"
     database_url: str = ""
+    llm_timeout: int = 60
+    llm_max_retries: int = 3
+    llm_embedding_model: str = "BAAI/bge-small-zh-v1.5"
 
     model_config = {"env_prefix": "", "case_sensitive": False}
 
