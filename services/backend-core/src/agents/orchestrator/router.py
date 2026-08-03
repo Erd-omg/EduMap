@@ -244,9 +244,18 @@ async def _run_generation(session_id: str, request: Request) -> None:
                 # Write every step's update back to the session state so
                 # the GET /status endpoint returns live agent progress
                 # instead of always showing the initial "running" state.
+                # agent_results is deep-merged (each node returns only its own
+                # slice) so previously-completed agents are not lost.
                 for node_name, update in step.items():
-                    if isinstance(update, dict):
-                        state.update(update)
+                    if not isinstance(update, dict):
+                        continue
+                    for key, value in update.items():
+                        if key == "agent_results" and isinstance(value, dict):
+                            merged = dict(state.get("agent_results") or {})
+                            merged.update(value)
+                            state["agent_results"] = merged
+                        else:
+                            state[key] = value
                 for node_name in step:
                     if node_name in phase_labels:
                         await queue.put({
