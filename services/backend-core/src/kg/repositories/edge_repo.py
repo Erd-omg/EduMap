@@ -29,11 +29,25 @@ def _row_to_kp(row: dict) -> KnowledgePoint:
     )
 
 
+# Validated relationship types — only these are allowed in Cypher queries.
+VALID_RELATION_TYPES = frozenset({"PREREQUISITE_OF", "RELATED_TO", "HAS_TOPIC"})
+
+
 class EdgeRepository:
     """CRUD + path queries for KnowledgeEdge relationships."""
 
     def __init__(self, conn: Neo4jPool):
         self.conn = conn
+
+    @staticmethod
+    def _validate_relation_type(relation_type: str) -> str:
+        """Validate and return a relation type, raising ValueError if invalid."""
+        if relation_type not in VALID_RELATION_TYPES:
+            raise ValueError(
+                f"Invalid relation type '{relation_type}'. "
+                f"Allowed: {', '.join(sorted(VALID_RELATION_TYPES))}"
+            )
+        return relation_type
 
     async def create_edge(
         self, source_id: str, target_id: str, relation_type: str
@@ -42,17 +56,16 @@ class EdgeRepository:
 
         Returns True if the edge was created/already exists.
         """
+        relation_type = self._validate_relation_type(relation_type)
         query = """
         MATCH (source:KnowledgePoint {id: $source_id})
         MATCH (target:KnowledgePoint {id: $target_id})
-        MERGE (source)-[r:$relation_type]->(target)
-        RETURN count(r) AS created
+        CALL apoc.create.relationship(source, $relation_type, {}, target)
+        YIELD rel
+        RETURN count(rel) AS created
         """
-        # Use APOC-style or string interpolation for relationship type since
-        # Cypher does not support parameterised relationship types directly.
-        query = query.replace("$relation_type", relation_type)
         result = await self.conn.execute_write(
-            query, {"source_id": source_id, "target_id": target_id}
+            query, {"source_id": source_id, "target_id": target_id, "relation_type": relation_type}
         )
         return result[0]["created"] > 0 if result else False
 
@@ -60,16 +73,17 @@ class EdgeRepository:
         self, source_id: str, target_id: str, relation_type: str
     ) -> bool:
         """Delete an edge. Returns True if deleted."""
+        relation_type = self._validate_relation_type(relation_type)
         query = """
         MATCH (source:KnowledgePoint {id: $source_id})
-            -[r:$relation_type]->
+            -[r:PREREQUISITE_OF|RELATED_TO|HAS_TOPIC]->
             (target:KnowledgePoint {id: $target_id})
+        WHERE type(r) = $relation_type
         DELETE r
         RETURN count(r) AS deleted
         """
-        query = query.replace("$relation_type", relation_type)
         result = await self.conn.execute_write(
-            query, {"source_id": source_id, "target_id": target_id}
+            query, {"source_id": source_id, "target_id": target_id, "relation_type": relation_type}
         )
         return result[0]["deleted"] > 0 if result else False
 

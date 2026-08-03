@@ -18,22 +18,22 @@ export function ProgressSlider({
 
   return (
     <div className="space-y-3">
-      {/* Progress bar */}
-      <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100">
+      {/* Progress bar — using mastery colors from design doc */}
+      <div className="h-3 w-full overflow-hidden rounded-full bg-border">
         <div className="flex h-full">
           <div
-            className="bg-green-500 transition-all duration-500"
+            className="bg-success transition-all duration-500"
             style={{ width: `${masteredPct}%` }}
           />
           <div
-            className="bg-blue-500 transition-all duration-500"
+            className="bg-warning transition-all duration-500"
             style={{ width: `${learningPct}%` }}
           />
         </div>
       </div>
 
       {/* Labels */}
-      <div className="flex items-center justify-between text-xs text-gray-500">
+      <div className="flex items-center justify-between text-xs text-text-secondary">
         <span>{Math.round(masteredPct)}% 已完成</span>
         <span>{totalCount} 个知识点</span>
       </div>
@@ -41,16 +41,16 @@ export function ProgressSlider({
       {/* Legend */}
       <div className="flex gap-4 text-xs">
         <div className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-green-500" />
-          <span className="text-gray-600">已掌握 ({masteredCount})</span>
+          <span className="h-2.5 w-2.5 rounded-full bg-success" />
+          <span className="text-text-secondary">已掌握 ({masteredCount})</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
-          <span className="text-gray-600">学习中 ({learningCount})</span>
+          <span className="h-2.5 w-2.5 rounded-full bg-warning" />
+          <span className="text-text-secondary">学习中 ({learningCount})</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-gray-300" />
-          <span className="text-gray-600">未开始 ({notStartedCount})</span>
+          <span className="h-2.5 w-2.5 rounded-full bg-text-light" />
+          <span className="text-text-light">未开始 ({notStartedCount})</span>
         </div>
       </div>
     </div>

@@ -1,9 +1,12 @@
 """Prompt Registry — versioned prompt management for all agents."""
 
 import json
+import logging
 from pathlib import Path
 
 _PROMPT_DIR = Path(__file__).parent
+
+logger = logging.getLogger(__name__)
 
 
 class PromptRegistry:
@@ -14,8 +17,15 @@ class PromptRegistry:
     @classmethod
     def load(cls) -> None:
         registry_path = _PROMPT_DIR / "registry.json"
-        if registry_path.exists():
+        if not registry_path.exists():
+            logger.warning("Prompt registry file not found: %s", registry_path)
+            cls._registry = {"prompts": {}}
+            return
+        try:
             cls._registry = json.loads(registry_path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.error("Failed to load prompt registry: %s", exc)
+            cls._registry = {"prompts": {}}
 
     @classmethod
     def get(cls, prompt_id: str, **kwargs) -> str:
@@ -28,9 +38,12 @@ class PromptRegistry:
             raise FileNotFoundError(f"Prompt file not found: {file_path}")
         template = file_path.read_text()
         if kwargs:
-            template = template.format(**kwargs)
+            try:
+                template = template.format(**kwargs)
+            except (KeyError, ValueError, IndexError) as exc:
+                logger.warning(
+                    "Failed to render prompt '%s': %s. "
+                    "Check template variables match the provided kwargs.",
+                    prompt_id, exc,
+                )
         return template
-
-
-# Auto-load on import
-PromptRegistry.load()

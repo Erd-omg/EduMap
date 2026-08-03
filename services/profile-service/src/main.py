@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.auth import verify_api_key
 from src.config import settings
 from src.db.database import DatabasePool
 from src.db.repository import ProfileRepository
@@ -31,11 +32,12 @@ app = FastAPI(
     title="EduMap Profile Service",
     version="0.1.0",
     description="User profilling service - data isolation layer",
+    dependencies=[Depends(verify_api_key)] if settings.api_key else [],
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

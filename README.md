@@ -11,13 +11,18 @@
 ```
                     ┌──────────────────────────────────────────────┐
                     │            Frontend (Next.js :3000)          │
-                    │  /chat  /generate  /learn  /mentor  /profile │
-                    └──────┬──────────────┬───────────────────────-┘
-                           │              │
-              REST/SSE (HTTP)      EventSource (SSE)
-                           │              │
-              ┌────────────▼──────────────▼──────────────────────┐
-              │              backend-core (:8000)                 │
+                    │  /chat  /generate  /learn  /profile        │
+                    └──────┬──────────────────────────────────────┘
+                           │
+              ┌────────────┼────────────────────────────┐
+              │            │                            │
+              ▼            ▼                            │
+     ┌──────────────┐  ┌──────────────────────────┐     │
+     │profile-svc   │  │    backend-core (:8000)   │     │
+     │(:8001)       │  │  LangGraph + RAG + KG API │     │
+     │画像分析 SSE   │  └──────────────────────────┘     │
+     └──────┬───────┘            │                      │
+            │                    │                      │
               │                                                   │
               │  ┌─────────────────────────────────────────┐      │
               │  │   LangGraph 编排 (6 Agents)             │      │
@@ -25,16 +30,21 @@
               │  │  → Content Auditor → Assessment         │      │
               │  └─────────────────────────────────────────┘      │
               │                                                   │
-              │  ┌─────────────┐  ┌──────────┐  ┌─────────────┐  │
-              │  │ Learning    │  │ Mentor   │  │ Knowledge   │  │
-              │  │ Path Service│  │ (RAG QA) │  │ Graph API   │  │
-              │  └─────────────┘  └──────────┘  └─────────────┘  │
-              │                                                   │
-              └────┬───────────┬───────────┬──────────────────────┘
+              │  ┌─────────────┐  ┌──────────┐  ┌────────────┐  ┌───────────────┐
+              │  │ Learning    │  │ Mentor   │  │ Knowledge  │  │ Memory System │
+              │  │ Path Service│  │ (RAG QA) │  │ Graph API  │  │ Sensory→Short │
+              │  └─────────────┘  └──────────┘  └────────────┘  │ → Long-term   │
+              │              ┌───────────────────┐               └───────┬───────┘
+              │              │ RAG 增强           │                      │
+              │              │ 语义分块+Reranking │                 ┌────▼────┐
+              │              │ 评测框架+工具系统   │                 │ Redis   │
+              │              └───────────────────┘                 │短期记忆  │
+              └────┬───────────┬───────────┬───────────────────────┴─────────┘
                    │           │           │
               ┌────▼───┐ ┌────▼───┐ ┌────▼───┐
               │ Neo4j  │ │Postgres│ │ChromaDB│
-              │(图谱)   │ │(画像)   │ │(向量)   │
+              │(图谱)   │ │(画像+   │ │(向量)   │
+              │        │ │ 长期记忆)│ │        │
               └────────┘ └────────┘ └────────┘
 ```
 
@@ -47,18 +57,22 @@
 | Phase 3 | 多智能体资源生成 (LangGraph, 6 Agents) | 39 | ✅ |
 | Phase 4 | 个性化学习路径 (PathService, D3 Skill Tree) | 19 | ✅ |
 | Phase 5 | Mentor RAG + 导航 + 文档 | ~20 | ✅ |
+| **Phase 6** | **记忆系统 + RAG 增强** | **~34** | **✅ 新增** — 三层记忆、工具系统、语义分块、Cross-Encoder Reranking、RAG 评测框架、volatile 存储持久化 |
+| **Phase 7** | **Agent Harness 标准化层** | **~14** | **✅ 新增** — BaseAgent ABC、结构化输出(双模式)、统一重试/可观测性、Tool/Memory Mixins、6 个 Agent 迁移 |
+| **Phase 8** | **运维加固 + 测试基建 + RAG 评测升级** | **~24** | **✅ 新增** — ChromaDB 锁定、Embedding 预热、种子自动加载、LLM 熔断器、pytest 650+ 项测试（含前端 Vitest + Playwright）、LLM-as-Judge 评测、学生问答数据集、CI 测试回归门禁 |
 
 ## 技术栈
 
 | 层 | 技术 |
 |---|---|
 | **前端** | Next.js 15, React 19, TypeScript, Tailwind CSS v4, D3.js v7 |
-| **后端** | Python 3.12, FastAPI, LangChain/LangGraph, httpx |
+| **后端** | Python 3.12, FastAPI, LangChain/LangGraph, httpx, asyncpg |
 | **图数据库** | Neo4j 5 (APOC) — 知识图谱、遍历、最短路径 |
-| **关系数据库** | PostgreSQL 16 — 用户画像 (JSONB) |
-| **向量数据库** | ChromaDB — 语义检索、相似度搜索 |
-| **缓存** | Redis 7 |
-| **LLM** | 适配器模式 (默认 OpenAI 兼容, 可切换) |
+| **关系数据库** | PostgreSQL 16 — 用户画像 (JSONB)、长期记忆、评测结果 |
+| **向量数据库** | ChromaDB — 语义检索、相似度搜索（具备内存回退模式） |
+| **缓存/短期记忆** | Redis 7 — 会话管理、对话轮次存储 |
+| **LLM** | 适配器模式 (默认 OpenAI 兼容, 可切换) — 支持工具调用格式 |
+| **嵌入/重排序** | sentence-transformers (BAAI/bge-small-zh-v1.5), Cross-Encoder |
 | **容器** | Docker Compose — 全部服务一键启动 |
 
 ## 服务端口
@@ -98,9 +112,23 @@ GET    /eval/cold-start              冷启动评估
 
 ### 资源生成 (`/api/v1/orchestrator/*`)
 ```
-POST   /generate                     启动多智能体生成
+POST   /generate                     启动多智能体生成（返回 session_id）
 GET    /status/{session_id}          查询生成状态
-GET    /stream/{session_id}          SSE 进度流
+GET    /stream/{session_id}          SSE 进度流（agent 阶段事件）
+```
+### 资源管理 (`/api/v1/resources/*`)
+```
+POST   /upload                       上传资源文件（自动解析 + ChromaDB 索引）
+GET    /                             列出资源（支持 user_id/kp_id/type/source 筛选）
+GET    /{id}                         获取资源元数据
+GET    /{id}/chunks?limit=N          获取上传资源解析的文本段落预览
+DELETE /{id}                         删除资源
+POST   /sync-generated               同步 AI 生成资源到资源库
+```
+
+### 对话画像分析 (`/api/v1/analysis/*`)
+```
+GET    /stream/{user_id}?message=    统一 SSE 流（画像分析 + Mentor RAG 问答混合路由）
 ```
 
 ### 学习路径 (`/api/v1/learning-path/*`)
@@ -111,10 +139,21 @@ POST   /progress                     记录学习进度
 GET    /{course_id}/content-style    内容类型建议
 ```
 
-### Mentor (`/api/v1/mentor/*`)
+### Mentor / RAG 增强 (`/api/v1/mentor/*`)
 ```
-GET    /stream/{user_id}             SSE 流式 RAG 问答
+GET    /stream/{user_id}             SSE 流式 RAG 问答（支持对话历史上下文）
 GET    /search                       知识点搜索 (预览)
+GET    /evaluate?sample=true&n=10    自动化评测（Precision/Recall/MRR/NDCG/HitRate）
+                                     sample=true 使用手工标注学生问答数据集
+POST   /rerank-preview               重排序预览（Cross-Encoder before/after）
+```
+
+### Memory 系统（自动集成）
+```
+- 三层记忆：Sensory（请求级） → Short-term（Redis, 1h TTL） → Long-term（PostgreSQL）
+- Episodic 记忆：用户交互记录（mentor 问答自动持久化）
+- Semantic 记忆：用户画像、学习偏好、技能摘要
+- 工具系统：ToolRegistry 管理 LLM 可用工具（KG 搜索/资源搜索/遗忘检查）
 ```
 
 ## 快速开始
@@ -138,9 +177,9 @@ pnpm dev
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `LLM_API_KEY` | `""` | LLM API 密钥 (空=mock) |
-| `LLM_API_BASE` | `""` | LLM API 地址 |
-| `LLM_MODEL` | `"spark"` | 模型名称 |
+| `LLM_API_KEY` | `""` | LLM API 密钥。**留空时系统以演示模式运行** — AI 对话和资源生成会提示未配置 API，但知识图谱、学习路径、资源管理等非 LLM 功能可正常使用 |
+| `LLM_API_BASE` | `""` | LLM API 地址（如 `https://api.deepseek.com/v1`） |
+| `LLM_MODEL` | `"deepseek-chat"` | 模型名称 |
 
 ## 项目结构
 
@@ -148,24 +187,23 @@ pnpm dev
 EduMap/
 ├── apps/web/                        # Next.js 15 前端
 │   ├── src/app/                     # 路由页面
-│   │   ├── chat/                    # 对话画像
-│   │   ├── generate/                # 资源生成
+│   │   ├── chat/                    # 统一对话（画像分析+智能辅导）
+│   │   ├── generate/                # 资源库（文件上传+管理）
 │   │   ├── learn/[courseId]/        # 学习路径
-│   │   ├── mentor/                  # Mentor 问答
+│   │   ├── mentor/                  # 重定向到 /chat
 │   │   └── profile/                 # 个人画像
 │   ├── src/components/              # 组件
-│   │   ├── generation/              # 生成工作流
 │   │   ├── knowledge-graph/         # 技能树
-│   │   ├── layout/                  # 导航栏
-│   │   ├── mentor/                  # Mentor 聊天
-│   │   ├── profiling/               # 雷达图/画像
-│   │   └── resources/               # 资源展示
+│   │   ├── layout/                  # 导航栏/侧边栏
+│   │   ├── profiling/               # 聊天窗口/雷达图/画像
+│   │   ├── mentor/                  # 来源面板 (source-panel)
+│   │   └── resources/               # 资源库 + 生成进度
 │   ├── src/hooks/                   # React Hooks
 │   └── src/stores/                  # Zustand 状态管理
 ├── packages/shared-types/           # TypeScript 共享类型
 ├── services/
 │   ├── backend-core/src/            # AI/Agent 服务
-│   │   ├── agents/                  # 智能体实现 (7个)
+│   │   ├── agents/                  # 智能体实现 (7个+记忆)
 │   │   │   ├── orchestrator/        # LangGraph 编排
 │   │   │   ├── planner/             # 知识提取
 │   │   │   ├── guardian/            # 结构验证
@@ -179,7 +217,28 @@ EduMap/
 │   │   ├── rag/                     # RAG 检索
 │   │   ├── prompts/                 # 提示词管理
 │   │   └── utils/                   # LLM 适配器
-│   ├── profile-service/src/         # 用户画像服务
+│   │   ├── memory/                  # 三层记忆系统 (Phase 6)
+│   │   ├── tools/                   # 工具系统 (Phase 6)
+│   │   └── rag/chunking/            # 语义/递归分块策略
+│   │   └── rag/reranking/           # Cross-Encoder 重排序
+│   │   └── rag/evaluation/          # 自动化评测框架
+│   │       ├── metrics.py           # Precision/Recall/MRR/NDCG/HitRate/Faithfulness
+│   │       ├── evaluator.py          # RAGEvaluator 评测管道
+│   │       ├── benchmark.py          # 基准测试运行器（支持 KG 生成 + 手工标注双数据源）
+│   │       ├── llm_judge.py          # LLM-as-Judge 评测（faithfulness + relevancy）
+│   │       └── datasets/             # 手工标注的学生问答评测数据集（20 条）
+│   │── tests/                         # pytest 自动化测试（575+ 项，含 API 集成测试）
+│   │   ├── conftest.py               # 全局 fixtures
+│   │   ├── mocks/                     # MockLLMAdapter
+│   │   ├── test_rag/                  # RAG 评测/分块/重排序测试（110 项）
+│   │   ├── test_harness/              # BaseAgent/Retry/StructuredOutput 测试
+│   │   ├── test_memory/               # 三层记忆系统测试（83 项）
+│   │   ├── test_tools/                # 工具系统测试（55 项）
+│   │   ├── test_kg/                   # 知识图谱/向量索引/语义去重测试（80 项）
+│   │   ├── test_learning_path/        # 遗忘曲线/路径服务测试（45 项）
+│   │   ├── test_agents/               # Guardian/Orchestrator 测试（50 项）
+│   │   ├── test_utils/                # LLM 熔断器测试（16 项）
+│   │   └── test_api/                  # FastAPI 集成测试（34 项，零 xfail）
 │   └── sandbox-service/src/         # 代码沙箱服务
 ├── scripts/db/                      # 数据库初始化脚本
 └── docker-compose.yml               # 开发环境编排
@@ -196,7 +255,56 @@ EduMap/
 | **Coder** | 代码生成 + 沙箱验证 | AST 分析 + Docker |
 | **Assessment** | 微测验生成 | LLM 结构化输出 |
 | **Content Auditor** | 生成质量审核 | ChromaDB 相似度 |
-| **Mentor** | RAG 问答 | ChromaDB + Neo4j 混合检索 |
+| **Mentor** | RAG 问答（支持对话历史） | ChromaDB + Neo4j 混合检索 + Cross-Encoder Reranking |
+
+### 增强系统（Phase 6-7）
+
+| 系统 | 角色 | 技术 |
+|------|------|------|
+| **记忆系统** | 三层记忆：Sensory → Short-term (Redis) → Long-term (PostgreSQL) | Redis + asyncpg + Pydantic |
+| **工具系统** | 为 agent 提供可调用工具（KG搜索/资源搜索/遗忘检查） | ToolRegistry + Prompt-injected tool format |
+| **分块引擎** | 多策略文档分块（语义/递归/固定） | sentence-transformers + 分离器层级 |
+| **RAG 评测** | 检索质量/生成质量自动化评测管道 | Precision@K / Recall@K / MRR / NDCG / HitRate / Faithfulness (LLM-as-Judge + 词重叠双模式) / Citation Accuracy / Context Coverage |
+| **Agent Harness** | 标准化 Agent 执行层：BaseAgent ABC、结构化输出(双模式)、统一重试、可观测性、Tool/Memory 注入 | `src/harness/` 8 个文件，6 个 Agent 迁移，全部 5 个 graph 节点统一 |
+
+## RAG 评测结果
+
+对 RAG 系统在真实数据库（Neo4j + ChromaDB）上进行了多维度评测，覆盖检索质量、响应延迟、端到端管线验证和反馈闭环。
+
+### 检索质量（200 条学生问答数据集，覆盖全部 22 个知识点）
+
+整体指标（n=200，含中文 jieba 分词支持的 faithfulnes/relevancy 评测）：
+
+| 指标 | @1 | @3 | @5 |
+|------|---|---|---|
+| **Precision** | 0.755 | 0.393 | 0.258 |
+| **Recall** | 0.597 | 0.855 | 0.916 |
+| **Hit Rate** | 0.755 | 0.930 | 0.960 |
+| **MRR** | — | **0.841** | — |
+
+按难度分解：
+
+| 难度 | n | P@1 | MRR | HR@3 |
+|------|---|-----|-----|------|
+| 基础 | 77 | 0.818 | 0.896 | 0.974 |
+| 中等 | 83 | 0.771 | 0.847 | 0.940 |
+| 高级 | 40 | 0.600 | 0.721 | 0.825 |
+
+### 端到端管线验证（上传→解析→索引→检索→回答）
+- ✅ 文件上传+ChromaDB 索引: 0.6s/文件，全部成功
+- ✅ 检索召回: 5/6 条查询找到上传内容（83.3%）
+- ✅ 生成回答: LLM 调用正常
+
+### 响应延迟（100 次调用，全管道）
+| P50 | P95 | P99 | 平均 |
+|-----|-----|-----|------|
+| 19.42ms | 54.66ms | 96.85ms | 25.75ms |
+
+### 反馈闭环验证
+- ✅ 记忆系统存储→召回正常
+- ✅ 纠错内容传递到 LLM 对话历史，改进回答质量
+- ⚠️ 当前架构限制：RAG 检索无状态，反馈不影响检索结果
+- 详情见 `benchmark_results/latest_expanded.json` 和 `benchmark_results/latest_sample.json`
 
 ## 许可证
 

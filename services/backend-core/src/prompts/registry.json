@@ -6,11 +6,6 @@
       "agent_id": "planner",
       "description": "从用户输入中提取知识点结构"
     },
-    "guardian/v1-validate": {
-      "path": "guardian/v1-validate.md",
-      "agent_id": "guardian",
-      "description": "验证知识结构合法性"
-    },
     "designer/v1-explanation": {
       "path": "designer/v1-explanation.md",
       "agent_id": "designer",

@@ -1,10 +1,7 @@
 你是一个内容审核专家。审核生成的学习内容是否与知识点匹配。
 
 知识点元数据：
-- 名称：{kp_metadata[name]}
-- 描述：{kp_metadata[description]}
-- 难度：{kp_metadata[difficulty]}
-- 核心概念：{kp_metadata[key_concepts]}
+{kp_metadata}
 
 生成的内容类型：{content_type}
 

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { UserProfile } from '@edumap/shared-types';
 
 interface ConversationMessage {
@@ -18,32 +19,44 @@ interface ProfileState {
   reset: () => void;
 }
 
-export const useProfileStore = create<ProfileState>((set) => ({
-  profile: null,
-  confidenceScores: {},
-  conversationHistory: [],
-  isAnalyzing: false,
-
-  updateProfile: (profile, confidenceScores) =>
-    set((s) => ({
-      profile,
-      ...(confidenceScores ? { confidenceScores } : {}),
-    })),
-
-  updateConfidence: (scores) => set({ confidenceScores: scores }),
-
-  addMessage: (role, content) =>
-    set((s) => ({
-      conversationHistory: [...s.conversationHistory, { role, content }],
-    })),
-
-  setAnalyzing: (v) => set({ isAnalyzing: v }),
-
-  reset: () =>
-    set({
+export const useProfileStore = create<ProfileState>()(
+  persist(
+    (set) => ({
       profile: null,
       confidenceScores: {},
       conversationHistory: [],
       isAnalyzing: false,
+
+      updateProfile: (profile, confidenceScores) =>
+        set((s) => ({
+          profile,
+          ...(confidenceScores ? { confidenceScores } : {}),
+        })),
+
+      updateConfidence: (scores) => set({ confidenceScores: scores }),
+
+      addMessage: (role, content) =>
+        set((s) => ({
+          conversationHistory: [...s.conversationHistory, { role, content }],
+        })),
+
+      setAnalyzing: (v) => set({ isAnalyzing: v }),
+
+      reset: () =>
+        set({
+          profile: null,
+          confidenceScores: {},
+          conversationHistory: [],
+          isAnalyzing: false,
+        }),
     }),
-}));
+    {
+      name: 'edumap-profile-storage',
+      partialize: (state) => ({
+        profile: state.profile,
+        confidenceScores: state.confidenceScores,
+        conversationHistory: state.conversationHistory.slice(-100), // keep last 100
+      }),
+    },
+  ),
+);

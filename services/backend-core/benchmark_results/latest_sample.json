@@ -1,0 +1,1119 @@
+{
+  "report_name": "sample",
+  "generated_at": "2026-07-27T21:24:23.511412+00:00",
+  "config": {
+    "k_values": [
+      1,
+      3,
+      5
+    ],
+    "chromadb_host": "chromadb",
+    "chromadb_port": 8000,
+    "embedding_model": "BAAI/bge-small-zh-v1.5",
+    "reranker_enabled": false
+  },
+  "kp_coverage": {
+    "total_dataset_kps": 17,
+    "found_in_neo4j": 17,
+    "missing": [],
+    "coverage_pct": 100.0
+  },
+  "retrieval_metrics": {
+    "overall": {
+      "n_queries": 20,
+      "precision": {
+        "1": 0.85,
+        "3": 0.4333,
+        "5": 0.27
+      },
+      "recall": {
+        "1": 0.6917,
+        "3": 0.9333,
+        "5": 0.95
+      },
+      "mrr": 0.9,
+      "ndcg": {
+        "1": 0.85,
+        "3": 0.9162,
+        "5": 0.9146
+      },
+      "hit_rate": {
+        "1": 0.85,
+        "3": 0.95,
+        "5": 0.95
+      }
+    },
+    "by_difficulty": {
+      "basic": {
+        "n_queries": 10,
+        "precision": {
+          "1": 0.8,
+          "3": 0.5,
+          "5": 0.3
+        },
+        "recall": {
+          "1": 0.6,
+          "3": 1.0,
+          "5": 1.0
+        },
+        "mrr": 0.9,
+        "ndcg": {
+          "1": 0.8,
+          "3": 0.9324,
+          "5": 0.9324
+        },
+        "hit_rate": {
+          "1": 0.8,
+          "3": 1.0,
+          "5": 1.0
+        }
+      },
+      "intermediate": {
+        "n_queries": 8,
+        "precision": {
+          "1": 0.875,
+          "3": 0.375,
+          "5": 0.25
+        },
+        "recall": {
+          "1": 0.7292,
+          "3": 0.8333,
+          "5": 0.875
+        },
+        "mrr": 0.875,
+        "ndcg": {
+          "1": 0.875,
+          "3": 0.875,
+          "5": 0.8709
+        },
+        "hit_rate": {
+          "1": 0.875,
+          "3": 0.875,
+          "5": 0.875
+        }
+      },
+      "advanced": {
+        "n_queries": 2,
+        "precision": {
+          "1": 1.0,
+          "3": 0.3333,
+          "5": 0.2
+        },
+        "recall": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0
+        },
+        "mrr": 1.0,
+        "ndcg": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0
+        },
+        "hit_rate": {
+          "1": 1.0,
+          "3": 1.0,
+          "5": 1.0
+        }
+      }
+    }
+  },
+  "per_query": [
+    {
+      "query": "数组和链表有什么区别？在插入操作上哪个更快？",
+      "difficulty": "basic",
+      "relevant_ids": [
+        "kp-array",
+        "kp-linkedlist"
+      ],
+      "top_k_ids": [
+        "kp-linkedlist",
+        "kp-array",
+        "kp-search-kmp",
+        "kp-graph",
+        "kp-string"
+      ],
+      "top_k_names": [
+        "链表",
+        "数组",
+        "KMP 算法",
+        "图",
+        "字符串"
+      ],
+      "top_k_scores": [
+        0.6664,
+        0.5597,
+        0.4815,
+        0.4701,
+        0.469
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.6667,
+        "5": 0.4
+      },
+      "recall": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "栈和队列的应用场景分别是什么？",
+      "difficulty": "basic",
+      "relevant_ids": [
+        "kp-queue",
+        "kp-stack"
+      ],
+      "top_k_ids": [
+        "kp-stack",
+        "kp-queue",
+        "kp-recursion",
+        "kp-sort",
+        "kp-sort-bubble"
+      ],
+      "top_k_names": [
+        "栈",
+        "队列",
+        "递归",
+        "排序算法",
+        "冒泡排序"
+      ],
+      "top_k_scores": [
+        0.5646,
+        0.5399,
+        0.4948,
+        0.4866,
+        0.4638
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.6667,
+        "5": 0.4
+      },
+      "recall": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "什么是二叉搜索树？它的查找时间复杂度是多少？",
+      "difficulty": "basic",
+      "relevant_ids": [
+        "kp-bst",
+        "kp-tree"
+      ],
+      "top_k_ids": [
+        "kp-bst",
+        "kp-tree",
+        "kp-search",
+        "kp-complexity",
+        "kp-search-binary"
+      ],
+      "top_k_names": [
+        "二叉搜索树",
+        "树",
+        "查找算法",
+        "复杂度分析",
+        "二分查找"
+      ],
+      "top_k_scores": [
+        0.7708,
+        0.6234,
+        0.5802,
+        0.5633,
+        0.5383
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.6667,
+        "5": 0.4
+      },
+      "recall": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "快速排序和归并排序的时间复杂度分别是多少？哪个更稳定？",
+      "difficulty": "basic",
+      "relevant_ids": [
+        "kp-sort-merge",
+        "kp-sort-quick"
+      ],
+      "top_k_ids": [
+        "kp-sort-quick",
+        "kp-sort-merge",
+        "kp-sort",
+        "kp-complexity",
+        "kp-sort-selection"
+      ],
+      "top_k_names": [
+        "快速排序",
+        "归并排序",
+        "排序算法",
+        "复杂度分析",
+        "选择排序"
+      ],
+      "top_k_scores": [
+        0.6513,
+        0.6442,
+        0.643,
+        0.575,
+        0.568
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.6667,
+        "5": 0.4
+      },
+      "recall": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "哈希表是如何解决冲突的？",
+      "difficulty": "basic",
+      "relevant_ids": [
+        "kp-hash"
+      ],
+      "top_k_ids": [
+        "kp-hash",
+        "哈希表冲突解决::chunk::0000",
+        "kp-search",
+        "kp-linkedlist",
+        "kp-graph"
+      ],
+      "top_k_names": [
+        "哈希表",
+        "哈希表冲突解决",
+        "查找算法",
+        "链表",
+        "图"
+      ],
+      "top_k_scores": [
+        0.6213,
+        0.5489,
+        0.5011,
+        0.3844,
+        0.3698
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "图的深度优先遍历和广度优先遍历有什么区别？各自用什么数据结构？",
+      "difficulty": "intermediate",
+      "relevant_ids": [
+        "kp-graph",
+        "kp-queue",
+        "kp-stack"
+      ],
+      "top_k_ids": [
+        "kp-graph",
+        "kp-queue",
+        "kp-complexity",
+        "kp-stack",
+        "kp-intro"
+      ],
+      "top_k_names": [
+        "图",
+        "队列",
+        "复杂度分析",
+        "栈",
+        "算法基础"
+      ],
+      "top_k_scores": [
+        0.6125,
+        0.5371,
+        0.5205,
+        0.51,
+        0.467
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.6667,
+        "5": 0.6
+      },
+      "recall": {
+        "1": 0.3333,
+        "3": 0.6667,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 0.9675
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "什么是平衡二叉树？为什么需要平衡操作？",
+      "difficulty": "intermediate",
+      "relevant_ids": [
+        "kp-bst",
+        "kp-tree"
+      ],
+      "top_k_ids": [
+        "kp-tree",
+        "kp-bst",
+        "kp-linkedlist",
+        "kp-search-binary",
+        "kp-search"
+      ],
+      "top_k_names": [
+        "树",
+        "二叉搜索树",
+        "链表",
+        "二分查找",
+        "查找算法"
+      ],
+      "top_k_scores": [
+        0.7276,
+        0.6097,
+        0.4613,
+        0.4555,
+        0.4487
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.6667,
+        "5": 0.4
+      },
+      "recall": {
+        "1": 0.5,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "冒泡排序和选择排序哪个效率更高？它们的区别在哪里？",
+      "difficulty": "basic",
+      "relevant_ids": [
+        "kp-sort-bubble",
+        "kp-sort-selection"
+      ],
+      "top_k_ids": [
+        "kp-sort",
+        "kp-sort-bubble",
+        "kp-sort-selection",
+        "kp-sort-quick",
+        "kp-sort-merge"
+      ],
+      "top_k_names": [
+        "排序算法",
+        "冒泡排序",
+        "选择排序",
+        "快速排序",
+        "归并排序"
+      ],
+      "top_k_scores": [
+        0.7354,
+        0.6932,
+        0.5632,
+        0.5621,
+        0.4989
+      ],
+      "precision": {
+        "1": 0.0,
+        "3": 0.6667,
+        "5": 0.4
+      },
+      "recall": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 0.5,
+      "ndcg": {
+        "1": 0.0,
+        "3": 0.6934,
+        "5": 0.6934
+      },
+      "hit_rate": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "单链表和双链表有什么区别？在什么情况下应该用双链表？",
+      "difficulty": "basic",
+      "relevant_ids": [
+        "kp-linkedlist"
+      ],
+      "top_k_ids": [
+        "kp-linkedlist",
+        "kp-search-kmp",
+        "kp-string",
+        "kp-array",
+        "kp-graph"
+      ],
+      "top_k_names": [
+        "链表",
+        "KMP 算法",
+        "字符串",
+        "数组",
+        "图"
+      ],
+      "top_k_scores": [
+        0.8026,
+        0.3962,
+        0.3874,
+        0.3803,
+        0.3687
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "如何判断一个链表是否有环？",
+      "difficulty": "intermediate",
+      "relevant_ids": [
+        "kp-linkedlist"
+      ],
+      "top_k_ids": [
+        "kp-linkedlist",
+        "kp-search-kmp",
+        "kp-search-binary",
+        "kp-graph",
+        "kp-search"
+      ],
+      "top_k_names": [
+        "链表",
+        "KMP 算法",
+        "二分查找",
+        "图",
+        "查找算法"
+      ],
+      "top_k_scores": [
+        0.6441,
+        0.4604,
+        0.4355,
+        0.4253,
+        0.4007
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "什么是递归？递归和迭代相比有什么优缺点？",
+      "difficulty": "basic",
+      "relevant_ids": [
+        "kp-recursion"
+      ],
+      "top_k_ids": [
+        "kp-recursion",
+        "kp-sort-merge",
+        "kp-sort",
+        "kp-stack",
+        "kp-complexity"
+      ],
+      "top_k_names": [
+        "递归",
+        "归并排序",
+        "排序算法",
+        "栈",
+        "复杂度分析"
+      ],
+      "top_k_scores": [
+        0.6802,
+        0.4599,
+        0.4562,
+        0.4529,
+        0.4312
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "二分查找的前提条件是什么？时间复杂度是多少？",
+      "difficulty": "basic",
+      "relevant_ids": [
+        "kp-search-binary"
+      ],
+      "top_k_ids": [
+        "kp-search",
+        "kp-search-binary",
+        "kp-complexity",
+        "kp-graph",
+        "kp-hash"
+      ],
+      "top_k_names": [
+        "查找算法",
+        "二分查找",
+        "复杂度分析",
+        "图",
+        "哈希表"
+      ],
+      "top_k_scores": [
+        0.6438,
+        0.601,
+        0.5947,
+        0.5125,
+        0.5022
+      ],
+      "precision": {
+        "1": 0.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 0.5,
+      "ndcg": {
+        "1": 0.0,
+        "3": 0.6309,
+        "5": 0.6309
+      },
+      "hit_rate": {
+        "1": 0.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "栈的括号匹配问题怎么解决？",
+      "difficulty": "basic",
+      "relevant_ids": [
+        "kp-stack"
+      ],
+      "top_k_ids": [
+        "kp-stack",
+        "kp-search-kmp",
+        "kp-complexity",
+        "kp-string",
+        "kp-recursion"
+      ],
+      "top_k_names": [
+        "栈",
+        "KMP 算法",
+        "复杂度分析",
+        "字符串",
+        "递归"
+      ],
+      "top_k_scores": [
+        0.6105,
+        0.5236,
+        0.4613,
+        0.4581,
+        0.4504
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "图的表示方式有哪些？各有什么优缺点？",
+      "difficulty": "intermediate",
+      "relevant_ids": [
+        "kp-graph"
+      ],
+      "top_k_ids": [
+        "kp-graph",
+        "kp-complexity",
+        "kp-linkedlist",
+        "kp-search",
+        "kp-hash"
+      ],
+      "top_k_names": [
+        "图",
+        "复杂度分析",
+        "链表",
+        "查找算法",
+        "哈希表"
+      ],
+      "top_k_scores": [
+        0.6758,
+        0.5268,
+        0.5141,
+        0.4769,
+        0.4289
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "什么是堆？堆排序的时间复杂度是多少？",
+      "difficulty": "intermediate",
+      "relevant_ids": [
+        "kp-heap"
+      ],
+      "top_k_ids": [
+        "kp-heap",
+        "kp-complexity",
+        "kp-sort-quick",
+        "kp-intro",
+        "kp-sort"
+      ],
+      "top_k_names": [
+        "堆",
+        "复杂度分析",
+        "快速排序",
+        "算法基础",
+        "排序算法"
+      ],
+      "top_k_scores": [
+        0.7097,
+        0.6205,
+        0.4751,
+        0.4743,
+        0.4734
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "拓扑排序有什么用？怎么实现？",
+      "difficulty": "intermediate",
+      "relevant_ids": [
+        "kp-graph",
+        "kp-stack"
+      ],
+      "top_k_ids": [
+        "kp-sort",
+        "kp-sort-quick",
+        "kp-sort-selection",
+        "kp-sort-bubble",
+        "kp-sort-merge"
+      ],
+      "top_k_names": [
+        "排序算法",
+        "快速排序",
+        "选择排序",
+        "冒泡排序",
+        "归并排序"
+      ],
+      "top_k_scores": [
+        0.5621,
+        0.5397,
+        0.5297,
+        0.5057,
+        0.4873
+      ],
+      "precision": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0
+      },
+      "recall": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0
+      },
+      "mrr": 0.0,
+      "ndcg": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0
+      },
+      "hit_rate": {
+        "1": 0.0,
+        "3": 0.0,
+        "5": 0.0
+      }
+    },
+    {
+      "query": "哈希表查找的平均时间复杂度为什么是O(1)？",
+      "difficulty": "intermediate",
+      "relevant_ids": [
+        "kp-hash"
+      ],
+      "top_k_ids": [
+        "kp-hash",
+        "kp-complexity",
+        "kp-search",
+        "kp-search-binary",
+        "kp-intro"
+      ],
+      "top_k_names": [
+        "哈希表",
+        "复杂度分析",
+        "查找算法",
+        "二分查找",
+        "算法基础"
+      ],
+      "top_k_scores": [
+        0.817,
+        0.6552,
+        0.6302,
+        0.4737,
+        0.4659
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "链表的快慢指针有什么典型应用？",
+      "difficulty": "intermediate",
+      "relevant_ids": [
+        "kp-linkedlist"
+      ],
+      "top_k_ids": [
+        "kp-linkedlist",
+        "kp-search-kmp",
+        "kp-hash",
+        "kp-sort-quick",
+        "kp-search"
+      ],
+      "top_k_names": [
+        "链表",
+        "KMP 算法",
+        "哈希表",
+        "快速排序",
+        "查找算法"
+      ],
+      "top_k_scores": [
+        0.6057,
+        0.4425,
+        0.424,
+        0.4217,
+        0.3875
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "动态规划的核心思想是什么？和分治算法有什么区别？",
+      "difficulty": "advanced",
+      "relevant_ids": [
+        "kp-dp"
+      ],
+      "top_k_ids": [
+        "kp-dp",
+        "kp-intro",
+        "kp-sort-quick",
+        "kp-search-binary",
+        "kp-search"
+      ],
+      "top_k_names": [
+        "动态规划",
+        "算法基础",
+        "快速排序",
+        "二分查找",
+        "查找算法"
+      ],
+      "top_k_scores": [
+        0.6192,
+        0.5643,
+        0.5203,
+        0.5101,
+        0.4902
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    },
+    {
+      "query": "KMP算法的核心思想是什么？为什么比暴力匹配快？",
+      "difficulty": "advanced",
+      "relevant_ids": [
+        "kp-search-kmp"
+      ],
+      "top_k_ids": [
+        "kp-search-kmp",
+        "kp-sort-quick",
+        "kp-intro",
+        "kp-complexity",
+        "kp-search"
+      ],
+      "top_k_names": [
+        "KMP 算法",
+        "快速排序",
+        "算法基础",
+        "复杂度分析",
+        "查找算法"
+      ],
+      "top_k_scores": [
+        0.6259,
+        0.5339,
+        0.5305,
+        0.5011,
+        0.5
+      ],
+      "precision": {
+        "1": 1.0,
+        "3": 0.3333,
+        "5": 0.2
+      },
+      "recall": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "mrr": 1.0,
+      "ndcg": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      },
+      "hit_rate": {
+        "1": 1.0,
+        "3": 1.0,
+        "5": 1.0
+      }
+    }
+  ],
+  "generation_metrics": {
+    "n_queries": 20,
+    "avg_faithfulness": 0.4133,
+    "avg_answer_relevancy": 0.7391,
+    "avg_context_length": 157.2,
+    "llm_faithfulness_avg": 0.0
+  }
+}

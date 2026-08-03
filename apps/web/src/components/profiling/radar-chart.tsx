@@ -139,9 +139,9 @@ export function RadarChart({ data, size = 280, className = '' }: RadarChartProps
     const polygon = g
       .append('polygon')
       .attr('points', dataPoints.map((p) => p.join(',')).join(' '))
-      .attr('fill', '#2563eb')
+      .attr('fill', '#A3B5A6')
       .attr('fill-opacity', Math.max(0.1, Math.min(0.4, 0.15 + 0.25 * avgConfidence)))
-      .attr('stroke', '#2563eb')
+      .attr('stroke', '#8FA392')
       .attr('stroke-width', 2)
       .attr('stroke-opacity', Math.max(0.3, Math.min(0.9, 0.5 + 0.5 * avgConfidence)))
       .attr('stroke-linejoin', 'round');
@@ -161,8 +161,8 @@ export function RadarChart({ data, size = 280, className = '' }: RadarChartProps
       .attr('cx', (d, i) => dataPoints[i][0])
       .attr('cy', (d, i) => dataPoints[i][1])
       .attr('r', 4)
-      .attr('fill', '#2563eb')
-      .attr('stroke', '#fff')
+      .attr('fill', '#A3B5A6')
+      .attr('stroke', '#FDFCF8')
       .attr('stroke-width', 2)
       .style('opacity', 0)
       .transition()
@@ -182,10 +182,10 @@ export function RadarChart({ data, size = 280, className = '' }: RadarChartProps
   if (data.length === 0) {
     return (
       <div
-        className={`flex items-center justify-center rounded-xl border border-dashed border-gray-200 bg-gray-50/50 ${className}`}
+        className={`flex items-center justify-center rounded-xl border border-dashed border-border bg-bg-secondary/50 ${className}`}
         style={{ width: dimensions.width, height: dimensions.height }}
       >
-        <p className="text-sm text-gray-400">等待对话分析...</p>
+        <p className="text-sm text-text-light">等待对话分析...</p>
       </div>
     );
   }
@@ -197,6 +197,8 @@ export function RadarChart({ data, size = 280, className = '' }: RadarChartProps
         width={dimensions.width}
         height={dimensions.height}
         className="overflow-visible"
+        role="img"
+        aria-label={`六维能力雷达图，${data.length} 个维度`}
       />
     </div>
   );

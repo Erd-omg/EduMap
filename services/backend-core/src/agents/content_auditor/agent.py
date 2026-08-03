@@ -12,6 +12,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from src.agents.models import AuditEntry, AuditorOutput, GeneratedResource, KnowledgeUnit
+from src.harness.base import BaseAgent
+from src.harness.types import AgentConfig, AgentInput
 from src.prompts import PromptRegistry
 
 if TYPE_CHECKING:
@@ -23,18 +25,46 @@ logger = logging.getLogger(__name__)
 _SIMILARITY_THRESHOLD = 0.8
 
 
-class ContentAuditorAgent:
+class ContentAuditorAgent(BaseAgent):
     """Quality gate that validates generated content against KP metadata."""
 
     def __init__(
         self,
         vector_index: VectorIndex | None = None,
         llm_adapter: BaseLLMAdapter | None = None,
+        embedding_model_name: str = "BAAI/bge-small-zh-v1.5",
+        **kwargs,
     ) -> None:
+        super().__init__(
+            llm_adapter=llm_adapter,
+            agent_name="content_auditor",
+            config=AgentConfig(max_retries=1, temperature=0.3),
+            **kwargs,
+        )
         self._vector_index = vector_index
-        self._llm = llm_adapter
+        self._embedding_model_name = embedding_model_name
+        self._model: Any = None
 
-    async def run(
+    def _get_embedding(self) -> Any:
+        """Lazy-load the sentence-transformers embedding model."""
+        if self._model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+                self._model = SentenceTransformer(self._embedding_model_name)
+            except Exception as exc:
+                logger.warning("Failed to load embedding model: %s", exc)
+                return None
+        return self._model
+
+    async def run(self, input: AgentInput) -> AuditorOutput:
+        """Harness-compatible run — wraps legacy logic."""
+        resources = input.extra.get("resources", [])
+        knowledge_unit = KnowledgeUnit(**input.extra.get("knowledge_unit", {}))
+        if resources and isinstance(resources[0], dict):
+            resources = [GeneratedResource(**r) for r in resources]
+        return await self._run_legacy(resources, knowledge_unit)
+
+    async def _run_legacy(
         self,
         resources: list[GeneratedResource],
         knowledge_unit: KnowledgeUnit,
@@ -81,12 +111,25 @@ class ContentAuditorAgent:
         """Compute embedding cosine similarity between resource content
         and the knowledge point's stored embedding in ChromaDB.
 
+        Generates a real embedding for the resource content and searches
+        for the nearest neighbor in ChromaDB.
+
         Returns the similarity distance (1 - distance) since ChromaDB
         returns cosine *distance* while we want cosine *similarity*.
         """
+        model = self._get_embedding()
+        if model is None:
+            logger.warning("ContentAuditor: embedding model not available, defaulting to 0.0")
+            return 0.0
+
         try:
+            # Encode resource content to get a real embedding
+            content_text = f"{resource.title} {resource.content[:2000]}"
+            emb = model.encode([content_text], show_progress_bar=False)[0]
+            emb_list = emb.tolist()
+
             results = self._vector_index.search(
-                embedding=[0.0] * 384,  # placeholder — would need real embedding
+                embedding=emb_list,
                 top_k=1,
             )
             if not results:
@@ -109,14 +152,15 @@ class ContentAuditorAgent:
         """Optionally use LLM to check if the content stays within the
         KP's conceptual boundaries."""
         try:
+            kp_metadata_str = (
+                f"名称: {knowledge_unit.name}\n"
+                f"描述: {knowledge_unit.description}\n"
+                f"难度: {knowledge_unit.difficulty}\n"
+                f"核心概念: {', '.join(knowledge_unit.key_concepts)}"
+            )
             prompt = PromptRegistry.get(
                 "content-auditor/v1-audit",
-                kp_metadata={
-                    "name": knowledge_unit.name,
-                    "description": knowledge_unit.description,
-                    "difficulty": knowledge_unit.difficulty,
-                    "key_concepts": knowledge_unit.key_concepts,
-                },
+                kp_metadata=kp_metadata_str,
                 content_type=resource.type,
                 content=resource.content[:2000],
             )

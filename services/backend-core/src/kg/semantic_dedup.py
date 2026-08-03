@@ -6,7 +6,6 @@ and merges duplicates while preserving graph integrity.
 
 import logging
 
-import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 
@@ -14,7 +13,7 @@ from src.kg.models import DedupResult, KnowledgePoint
 
 logger = logging.getLogger(__name__)
 
-_SIMILARITY_THRESHOLD = 0.85
+_SIMILARITY_THRESHOLD = 0.9
 
 
 class SemanticDedupService:
@@ -26,11 +25,18 @@ class SemanticDedupService:
         vector_index: VectorIndex instance (optional, for embedding storage).
     """
 
-    def __init__(self, kp_repo, edge_repo, vector_index=None):
+    def __init__(self, kp_repo, edge_repo, vector_index=None, embedding_model: str = "BAAI/bge-small-zh-v1.5"):
         self.kp_repo = kp_repo
         self.edge_repo = edge_repo
         self.vector_index = vector_index
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        self._embedding_model = embedding_model
+        self.model: SentenceTransformer | None = None
+
+    def _get_model(self) -> SentenceTransformer:
+        """Lazy-load the embedding model."""
+        if self.model is None:
+            self.model = SentenceTransformer(self._embedding_model)
+        return self.model
 
     async def find_duplicates(
         self, kp_id: str | None = None
@@ -56,7 +62,8 @@ class SemanticDedupService:
         texts_a = [f"{a.name} {a.description}" for a, b in pairs]
         texts_b = [f"{b.name} {b.description}" for a, b in pairs]
 
-        embeddings = self.model.encode(
+        model = self._get_model()
+        embeddings = model.encode(
             texts_a + texts_b, show_progress_bar=False
         )
         n = len(pairs)

@@ -4,10 +4,6 @@ import { useState } from 'react';
 import { useProfileStore } from '../../stores/profile-store';
 import type {
   UserProfile,
-  LearningAbility,
-  LearningMotivation,
-  InteractionStyle,
-  FocusCharacteristics,
   KnowledgeCoverage,
 } from '@edumap/shared-types';
 
@@ -151,12 +147,12 @@ export function ProfileCard() {
 
   if (!profile) {
     return (
-      <div className="rounded-xl border border-dashed border-gray-200 bg-white p-8 text-center">
+      <div className="rounded-xl border border-dashed border-border bg-bg-card p-8 text-center">
         <div className="mx-auto mb-3 text-4xl">📊</div>
-        <h3 className="mb-2 text-lg font-semibold text-gray-700">
+        <h3 className="mb-2 text-lg font-semibold text-text-primary">
           6 维画像概览
         </h3>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-text-secondary">
           尚无法显示画像数据。请先进行对话分析以生成您的个性化学习画像。
         </p>
       </div>
@@ -173,12 +169,12 @@ export function ProfileCard() {
   ];
 
   return (
-    <div className="rounded-xl border bg-white p-5 shadow-sm">
+    <div className="rounded-xl border border-border bg-bg-card p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900">
+        <h3 className="text-lg font-semibold text-text-primary">
           6 维画像概览
         </h3>
-        <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs text-blue-600">
+        <span className="rounded-full bg-brand/10 px-2.5 py-0.5 text-xs text-brand">
           实时更新
         </span>
       </div>
@@ -216,10 +212,10 @@ export function ProfileCard() {
                 onClick={() =>
                   setExpandedDim(isExpanded ? null : key)
                 }
-                className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-gray-50"
+                className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-bg-secondary"
               >
                 <span className="text-lg">{config?.icon || '📊'}</span>
-                <span className="flex-1 text-sm font-medium text-gray-800">
+                <span className="flex-1 text-sm font-medium text-text-primary">
                   {config?.label || key}
                 </span>
 
@@ -232,7 +228,7 @@ export function ProfileCard() {
 
                 {/* Expand indicator */}
                 <svg
-                  className={`h-4 w-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                  className={`h-4 w-4 text-text-light transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -248,15 +244,15 @@ export function ProfileCard() {
 
               {/* Confidence bar */}
               <div className="px-3 pb-1.5">
-                <div className="flex items-center gap-2 text-xs text-gray-400">
+                <div className="flex items-center gap-2 text-xs text-text-light">
                   <span>置信度</span>
-                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-border">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${getConfidenceColor(confidence)}`}
                       style={{ width: `${confidence * 100}%` }}
                     />
                   </div>
-                  <span className="w-8 text-right font-medium text-gray-500">
+                  <span className="w-8 text-right font-medium text-text-secondary">
                     {(confidence * 100).toFixed(0)}%
                   </span>
                 </div>
@@ -264,29 +260,29 @@ export function ProfileCard() {
 
               {/* Expanded sub-details */}
               {isExpanded && subValues.length > 0 && (
-                <div className="border-t bg-gray-50/50 px-3 py-2">
+                <div className="border-t border-border bg-bg-primary/50 px-3 py-2">
                   {subValues.map(([label, value]) => (
                     <div
                       key={label}
                       className="flex items-center justify-between py-1 text-xs"
                     >
-                      <span className="text-gray-500">{label}</span>
+                      <span className="text-text-secondary">{label}</span>
                       {typeof value === 'number' ? (
                         <div className="flex items-center gap-2">
-                          <div className="h-1.5 w-16 overflow-hidden rounded-full bg-gray-200">
+                          <div className="h-1.5 w-16 overflow-hidden rounded-full bg-border">
                             <div
-                              className="h-full rounded-full bg-blue-400"
+                              className="h-full rounded-full bg-brand"
                               style={{
                                 width: `${Math.max(0, Math.min(100, value * 100))}%`,
                               }}
                             />
                           </div>
-                          <span className="w-8 text-right font-medium text-gray-700">
+                          <span className="w-8 text-right font-medium text-text-primary">
                             {(value * 100).toFixed(0)}%
                           </span>
                         </div>
                       ) : (
-                        <span className="font-medium text-gray-700">
+                        <span className="font-medium text-text-primary">
                           {value}
                         </span>
                       )}
@@ -295,19 +291,19 @@ export function ProfileCard() {
 
                   {/* Knowledge coverage specific detail */}
                   {isKnowledgeCoverage && (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5 border-t pt-1.5">
+                    <div className="mt-1.5 flex flex-wrap gap-1.5 border-t border-border pt-1.5">
                       {profile.knowledge_coverage.mastered.length > 0 && (
-                        <div className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                        <div className="rounded-full bg-success-bg px-2 py-0.5 text-xs text-success">
                           已掌握: {profile.knowledge_coverage.mastered.join(', ')}
                         </div>
                       )}
                       {profile.knowledge_coverage.learning.length > 0 && (
-                        <div className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+                        <div className="rounded-full bg-warning-bg px-2 py-0.5 text-xs text-warning">
                           学习中: {profile.knowledge_coverage.learning.join(', ')}
                         </div>
                       )}
                       {profile.knowledge_coverage.not_started.length > 0 && (
-                        <div className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                        <div className="rounded-full bg-bg-secondary px-2 py-0.5 text-xs text-text-secondary">
                           未开始: {profile.knowledge_coverage.not_started.join(', ')}
                         </div>
                       )}

@@ -9,11 +9,14 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from src.agents.models import CoderOutput, KnowledgeUnit
+from src.harness.base import BaseAgent
+from src.harness.types import AgentConfig, AgentInput
 from src.prompts import PromptRegistry
 
 if TYPE_CHECKING:
@@ -25,18 +28,30 @@ _MAX_FIX_ITERATIONS = 2
 _SANDBOX_TIMEOUT = 15
 
 
-class CoderAgent:
+class CoderAgent(BaseAgent):
     """Generates, validates, and fixes code examples for a KP."""
 
     def __init__(
         self,
         llm_adapter: BaseLLMAdapter,
         sandbox_url: str = "http://sandbox-service:8002",
+        **kwargs,
     ) -> None:
-        self._llm = llm_adapter
+        super().__init__(
+            llm_adapter=llm_adapter,
+            agent_name="coder",
+            config=AgentConfig(max_retries=3, temperature=0.3),
+            **kwargs,
+        )
         self._sandbox_url = sandbox_url.rstrip("/")
 
-    async def run(
+    async def run(self, input: AgentInput) -> CoderOutput:
+        """Harness-compatible run — wraps legacy logic."""
+        knowledge_unit = KnowledgeUnit(**input.extra.get("knowledge_unit", {}))
+        language = input.extra.get("language", "python")
+        return await self._run_legacy(knowledge_unit, language)
+
+    async def _run_legacy(
         self,
         knowledge_unit: KnowledgeUnit,
         language: str = "python",
@@ -70,7 +85,10 @@ class CoderAgent:
                     if attempt < _MAX_FIX_ITERATIONS:
                         code = await self._fix_code(code, str(exc), knowledge_unit)
                         continue
-                    break
+                    output.ast_valid = False
+                    output.execution_success = False
+                    output.execution_result = f"AST validation failed: {exc}"
+                    return output
 
             # Sandbox execution
             try:
@@ -143,8 +161,6 @@ class CoderAgent:
     @staticmethod
     def _extract_code(text: str) -> str:
         """Extract code from markdown code blocks, or return text as-is."""
-        import re
-
         # Try ```python ... ``` or ``` ... ``` blocks
         match = re.search(r"```(?:\w+)?\s*\n?(.*?)\n?```", text, re.DOTALL)
         if match:

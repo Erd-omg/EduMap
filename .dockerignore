@@ -1,0 +1,41 @@
+# ─── Build context ───────────────────────────────────────
+.git/
+.gitignore
+.github/
+
+# ─── Dependencies ─────────────────────────────────────────
+node_modules/
+.virtual_documents/
+.venv/
+venv/
+.pnpm-store/
+
+# ─── Build output ─────────────────────────────────────────
+.next/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# ─── Environment ──────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.log
+
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# ─── IDE ──────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# ─── Docker ───────────────────────────────────────────────
+.docker/

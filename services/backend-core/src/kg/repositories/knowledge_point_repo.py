@@ -1,5 +1,6 @@
 """KnowledgePoint CRUD and traversal repository."""
 
+import collections
 import logging
 from typing import Any
 
@@ -14,11 +15,17 @@ from src.kg.models import (
 
 logger = logging.getLogger(__name__)
 
+# Whitelist of allowed property keys for the update() method.
+ALLOWED_UPDATE_KEYS = frozenset({
+    "name", "description", "difficulty", "category",
+    "canonical", "merged_from_ids", "prerequisites",
+})
+
 
 def _row_to_kp(row: dict) -> KnowledgePoint:
     """Convert a Cypher result row to a KnowledgePoint."""
     node = row.get("kp") or row.get("n") or row.get("ancestor") or row.get("related") or row.get("startNode") or row
-    props = dict(node) if isinstance(node, dict) else {}
+    props = dict(node) if isinstance(node, collections.abc.Mapping) else {}
     return KnowledgePoint(
         id=props.get("id", ""),
         name=props.get("name", ""),
@@ -79,6 +86,14 @@ class KnowledgePointRepository:
         if not data:
             return await self.get(kp_id)
 
+        # Validate property keys against whitelist
+        invalid_keys = [k for k in data if k not in ALLOWED_UPDATE_KEYS]
+        if invalid_keys:
+            raise ValueError(
+                f"Invalid property keys: {invalid_keys}. "
+                f"Allowed: {', '.join(sorted(ALLOWED_UPDATE_KEYS))}"
+            )
+
         set_clauses = ", ".join(f"kp.{k} = ${k}" for k in data)
         query = f"""
         MATCH (kp:KnowledgePoint {{id: $id}})
@@ -124,15 +139,21 @@ class KnowledgePointRepository:
     async def get_prerequisites(
         self, kp_id: str, depth: int = 3
     ) -> list[KnowledgePoint]:
-        """Recursively fetch prerequisite ancestors up to a given depth."""
-        query = """
-        MATCH path = (kp:KnowledgePoint {id: $kp_id})
-            <-[:PREREQUISITE_OF*0..$depth]-(ancestor:KnowledgePoint)
+        """Recursively fetch prerequisite ancestors up to a given depth.
+
+        NOTE: Neo4j 5.x does not support parameterized values in variable-length
+        path patterns (*0..$depth). We inject the literal depth via f-string
+        instead — depth is an integer parameter controlled by the server, never
+        user-supplied, so this is safe from injection.
+        """
+        query = f"""
+        MATCH path = (kp:KnowledgePoint {{id: $kp_id}})
+            <-[:PREREQUISITE_OF*0..{max(0, depth)}]-(ancestor:KnowledgePoint)
         RETURN ancestor, length(path) AS depth
         ORDER BY depth
         """
         result = await self.conn.execute_read(
-            query, {"kp_id": kp_id, "depth": depth}
+            query, {"kp_id": kp_id}
         )
         seen: set[str] = set()
         points: list[KnowledgePoint] = []
@@ -194,13 +215,13 @@ class KnowledgePointRepository:
 
     async def search_by_name(self, query_str: str) -> list[KnowledgePoint]:
         """Case-insensitive search by name (CONTAINS)."""
-        query = """
+        cypher = """
         MATCH (kp:KnowledgePoint)
-        WHERE toLower(kp.name) CONTAINS toLower($query)
+        WHERE toLower(kp.name) CONTAINS toLower($search_term)
         RETURN kp
         ORDER BY kp.id
         """
-        result = await self.conn.execute_read(query, {"query": query_str})
+        result = await self.conn.execute_read(cypher, {"search_term": query_str})
         return [_row_to_kp(row) for row in result]
 
     async def get_course_graph(self, course_id: str) -> KnowledgeGraphResponse:
@@ -208,13 +229,13 @@ class KnowledgePointRepository:
         query = """
         MATCH (c:Course {id: $course_id})-[:HAS_TOPIC]->(kp:KnowledgePoint)
         OPTIONAL MATCH (kp)-[r:PREREQUISITE_OF|RELATED_TO]->(other:KnowledgePoint)
-        WHERE (other)<-[:HAS_TOPIC]-(c)
+          WHERE other IS NULL OR (other)<-[:HAS_TOPIC]-(c)
         WITH collect(DISTINCT kp) AS nodes,
-             collect(DISTINCT {
-                 source: startNode(r).id,
-                 target: endNode(r).id,
-                 relation_type: type(r)
-             }) AS edges
+             [x IN collect(DISTINCT CASE WHEN r IS NOT NULL THEN {
+               source: startNode(r).id,
+               target: endNode(r).id,
+               relation_type: type(r)
+             } END) WHERE x IS NOT NULL] AS edges
         RETURN nodes, edges
         """
         result = await self.conn.execute_read(query, {"course_id": course_id})
@@ -228,7 +249,7 @@ class KnowledgePointRepository:
         nodes = []
         seen_ids: set[str] = set()
         for n in nodes_raw:
-            props = dict(n) if isinstance(n, dict) else {}
+            props = dict(n) if isinstance(n, collections.abc.Mapping) else {}
             pid = props.get("id", "")
             if pid and pid not in seen_ids:
                 seen_ids.add(pid)

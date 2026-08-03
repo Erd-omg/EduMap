@@ -36,7 +36,7 @@ services:
     environment:
       NEO4J_AUTH: neo4j/edumap_dev
       NEO4J_PLUGINS: '["apoc"]'
-      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_security_procedures_unrestricted: apoc.create.,apoc.merge.,apoc.coll.
     ports:
       - "7474:7474"  # Browser UI
       - "7687:7687"  # Bolt protocol
@@ -65,7 +65,7 @@ services:
     logging: *default-logging
 
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:1.5.9
     container_name: edumap-chromadb
     environment:
       IS_PERSISTENT: "TRUE"
@@ -75,14 +75,21 @@ services:
       - "8003:8000"
     volumes:
       - chroma-data:/chroma/data
+    healthcheck:
+      # Chroma 1.5.9 image has no curl/python — probe TCP readiness via bash
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8000' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     logging: *default-logging
 
   # ─── Backend Services ─────────────────────────────────────────
 
   backend-core:
     build:
-      context: ./services/backend-core
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/backend-core/Dockerfile
     container_name: edumap-backend-core
     ports:
       - "8000:8000"
@@ -96,8 +103,17 @@ services:
       REDIS_URL: redis://redis:6379/0
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_API_BASE: ${LLM_API_BASE:-}
-      LLM_MODEL: ${LLM_MODEL:-spark}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      API_KEY: ${API_KEY:-}
+      SANDBOX_URL: http://sandbox-service:8002
       DATABASE_URL: postgresql+asyncpg://edumap:edumap_dev@postgres:5432/edumap
+      # Persist the sentence-transformers model cache across container recreations
+      # (huggingface.co may be unreachable from inside the container)
+      HF_HOME: /app/.cache/huggingface
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - hf-cache:/app/.cache/huggingface
     depends_on:
       postgres:
         condition: service_healthy
@@ -106,10 +122,18 @@ services:
       redis:
         condition: service_healthy
       chromadb:
-        condition: service_started
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - ./services/backend-core:/app
+        condition: service_healthy
+    healthcheck:
+      # python:3.12-slim image has no curl — use python like the Dockerfile
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    # Remove --reload + volume mount to eliminate WatchFiles CPU overhead
+    # and slow host-filesystem Python imports. The container image already
+    # contains the source code.
     logging: *default-logging
 
   profile-service:
@@ -121,8 +145,12 @@ services:
       - "8001:8001"
     environment:
       LOG_LEVEL: DEBUG
-      DATABASE_URL: postgresql+asyncpg://edumap:edumap_dev@postgres:5432/edumap
+      DATABASE_URL: postgresql://edumap:edumap_dev@postgres:5432/edumap
       REDIS_URL: redis://redis:6379/1
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      API_KEY: ${API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -142,6 +170,7 @@ services:
       - "8002:8002"
     environment:
       LOG_LEVEL: DEBUG
+      API_KEY: ${API_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: uvicorn src.main:app --host 0.0.0.0 --port 8002 --reload
@@ -163,41 +192,8 @@ services:
       - backend-core
       - profile-service
     command: pnpm dev
-    volumes:
-      - ./apps/web:/app/apps/web
-      - ./packages:/app/packages
-    logging: *default-logging
-
-  # ─── Background Workers ───────────────────────────────────────
-
-  celery-worker:
-    build:
-      context: ./services/backend-core
-      dockerfile: Dockerfile
-    container_name: edumap-celery-worker
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: edumap_dev
-      CHROMA_HOST: chromadb
-      CHROMA_PORT: 8000
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_API_BASE: ${LLM_API_BASE:-}
-      LLM_MODEL: ${LLM_MODEL:-spark}
-      DATABASE_URL: postgresql+asyncpg://edumap:edumap_dev@postgres:5432/edumap
-    depends_on:
-      postgres:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      chromadb:
-        condition: service_started
-    command: celery -A src.celery_app worker --loglevel=info
-    volumes:
-      - ./services/backend-core:/app
+    # Volume mount removed because pnpm symlinks break across host→container
+    # boundaries. The Docker image already contains source + node_modules.
     logging: *default-logging
 
 volumes:
@@ -206,3 +202,4 @@ volumes:
   neo4j-logs:
   redis-data:
   chroma-data:
+  hf-cache:

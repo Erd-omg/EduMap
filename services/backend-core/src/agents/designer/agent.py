@@ -12,6 +12,8 @@ import re
 from typing import TYPE_CHECKING
 
 from src.agents.models import DesignerOutput, GeneratedResource, KnowledgeUnit
+from src.harness.base import BaseAgent
+from src.harness.types import AgentConfig, AgentInput
 from src.prompts import PromptRegistry
 
 if TYPE_CHECKING:
@@ -26,13 +28,25 @@ _CONTENT_TYPE_PROMPTS: dict[str, str] = {
 }
 
 
-class DesignerAgent:
+class DesignerAgent(BaseAgent):
     """Generates learning content for a given knowledge point."""
 
-    def __init__(self, llm_adapter: BaseLLMAdapter) -> None:
-        self._llm = llm_adapter
+    def __init__(self, llm_adapter: BaseLLMAdapter, **kwargs) -> None:
+        super().__init__(
+            llm_adapter=llm_adapter,
+            agent_name="designer",
+            config=AgentConfig(max_retries=2, temperature=0.5),
+            **kwargs,
+        )
 
-    async def run(
+    async def run(self, input: AgentInput) -> DesignerOutput:
+        """Harness-compatible run — wraps legacy logic."""
+        knowledge_unit = KnowledgeUnit(**input.extra.get("knowledge_unit", {}))
+        content_types = input.extra.get("content_types")
+        user_profile = input.extra.get("user_profile")
+        return await self._run_legacy(knowledge_unit, content_types, user_profile)
+
+    async def _run_legacy(
         self,
         knowledge_unit: KnowledgeUnit,
         content_types: list[str] | None = None,

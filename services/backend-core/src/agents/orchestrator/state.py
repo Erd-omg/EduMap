@@ -53,6 +53,10 @@ class EduMapState(TypedDict, total=False):
     # ── Phase 3: LLM config ─────────────────────────────────────────────
     llm_config: Optional[dict]  # model, temperature, etc.
 
+    # ── Memory & Tools (Phase 6+) ───────────────────────────────
+    memory_context: Optional[dict]  # loaded from memory system
+    tool_results: List[dict]  # results from tool calls
+
     # ── Errors ──────────────────────────────────────────────────────────
     errors: List[Dict[str, str]]
 

@@ -4,6 +4,10 @@ RUN pip install --no-cache-dir uv
 COPY requirements.txt .
 RUN uv pip install --system -r requirements.txt
 COPY src/ src/
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser --system --uid 1001 appuser --ingroup appgroup && \
+    chown -R appuser:appgroup /app
+USER appuser
 EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"

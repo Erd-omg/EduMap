@@ -55,11 +55,69 @@ class PathService:
         self,
         kp_repo: KnowledgePointRepository,
         edge_repo: EdgeRepository,
+        db_pool=None,
     ) -> None:
         self._kp_repo = kp_repo
         self._edge_repo = edge_repo
         # In-memory progress store (prototype — replace with DB later)
         self._progress: dict[str, list[ProgressRecord]] = {}
+        self._db_pool = db_pool  # Optional asyncpg pool for persistence
+        self._progress_loaded: set[str] = set()
+
+    async def _load_progress(self, user_id: str) -> None:
+        """Load learning progress from PostgreSQL for a user."""
+        if user_id in self._progress_loaded or self._db_pool is None:
+            return
+
+        self._progress_loaded.add(user_id)
+        try:
+            async with self._db_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT user_id, kp_id, status, score, time_spent_minutes, metadata,
+                           created_at, updated_at
+                    FROM learning_progress
+                    WHERE user_id = $1
+                    """,
+                    user_id,
+                )
+                records = []
+                for row in rows:
+                    record = ProgressRecord(
+                        user_id=row["user_id"],
+                        course_id=row.get("kp_id", "").split("::")[0] if "::" in (row.get("kp_id") or "") else "",
+                        kp_id=row["kp_id"],
+                        status=row["status"],
+                        quiz_score=row["score"],
+                        completed_at=row["updated_at"].isoformat() if row["status"] == "completed" else None,
+                    )
+                    records.append(record)
+                self._progress[user_id] = records
+                logger.debug("Loaded %d progress records for user %s", len(records), user_id)
+        except Exception as exc:
+            logger.debug("Failed to load progress from DB: %s", exc)
+
+    async def _save_progress(self, user_id: str, kp_id: str, status: str, score: float | None) -> None:
+        """Persist learning progress to PostgreSQL."""
+        if self._db_pool is None:
+            return
+
+        try:
+            async with self._db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO learning_progress (user_id, kp_id, status, score)
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (user_id, kp_id)
+                    DO UPDATE SET
+                        status = EXCLUDED.status,
+                        score = COALESCE(EXCLUDED.score, learning_progress.score),
+                        updated_at = NOW()
+                    """,
+                    user_id, kp_id, status, score,
+                )
+        except Exception as exc:
+            logger.debug("Failed to save progress to DB: %s", exc)
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -84,6 +142,7 @@ class PathService:
         sorted_ids = self._topo_sort(graph.nodes, graph.edges)
 
         # 3. Get profile status + progress
+        await self._load_progress(user_id)
         mastery_map = self._extract_mastery(profile) if profile else {}
         user_progress = self._progress.get(user_id, [])
         progress_map = {r.kp_id: r for r in user_progress if r.course_id == course_id}
@@ -161,7 +220,12 @@ class PathService:
         # Score each ready node
         ability = self._estimate_ability(profile)
         mastery_map = self._extract_mastery(profile) if profile else {}
-        gap_set = set(mastery_map.get("learning", [])) if isinstance(mastery_map, dict) else set()
+        gap_set = {
+            kp_id for kp_id, status in mastery_map.items()
+            if status == "learning"
+        } if isinstance(mastery_map, dict) else set()
+        if gap_set:
+            logger.debug("Gap set (%d items): W_GAP=%.1f contributes to recommendation", len(gap_set), W_GAP)
 
         best_node: PathNode | None = None
         best_score = -1.0
@@ -221,6 +285,10 @@ class PathService:
             completed_at=datetime.now(timezone.utc).isoformat() if status == "completed" else None,
         )
         self._progress[user_id].append(record)
+
+        # Persist to DB
+        await self._save_progress(user_id, kp_id, record.status, quiz_score)
+
         logger.info("Progress recorded: user=%s course=%s kp=%s status=%s", user_id, course_id, kp_id, status)
 
         return await self.get_personalized_path(course_id, user_id)

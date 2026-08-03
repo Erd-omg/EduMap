@@ -1,7 +1,10 @@
 import json
+import logging
 from typing import Any, AsyncIterator
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """你是一个学习画像分析专家。根据用户的对话文本，分析以下六个维度的学习特征。
 
@@ -109,67 +112,75 @@ class ProfileAnalyzer:
         if not self.api_key:
             return json.dumps(self._mock_analysis(), ensure_ascii=False)
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            url = (
-                f"{self.api_base}/chat/completions"
-                if self.api_base
-                else "https://api.openai.com/v1/chat/completions"
-            )
-            resp = await client.post(
-                url,
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 2048,
-                },
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                url = (
+                    f"{self.api_base}/chat/completions"
+                    if self.api_base
+                    else "https://api.openai.com/v1/chat/completions"
+                )
+                resp = await client.post(
+                    url,
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "temperature": 0.3,
+                        "max_tokens": 2048,
+                    },
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+        except Exception as exc:
+            logger.warning("LLM API call failed, falling back to mock: %s", exc)
+            return json.dumps(self._mock_analysis(), ensure_ascii=False)
 
     async def _call_llm_stream(
         self, messages: list[dict]
     ) -> AsyncIterator[str]:
         """Stream from LLM. Fallback to mock if no API key."""
         if not self.api_key:
+            # Yield entire mock response at once (not char-by-char) to avoid SSE chunk storms
             result = json.dumps(self._mock_analysis(), ensure_ascii=False)
-            for char in result:
-                yield char
+            yield result
             return
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            url = (
-                f"{self.api_base}/chat/completions"
-                if self.api_base
-                else "https://api.openai.com/v1/chat/completions"
-            )
-            async with client.stream(
-                "POST",
-                url,
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 2048,
-                    "stream": True,
-                },
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_str)
-                            delta = chunk["choices"][0].get("delta", {})
-                            if "content" in delta:
-                                yield delta["content"]
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            continue
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                url = (
+                    f"{self.api_base}/chat/completions"
+                    if self.api_base
+                    else "https://api.openai.com/v1/chat/completions"
+                )
+                async with client.stream(
+                    "POST",
+                    url,
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "temperature": 0.3,
+                        "max_tokens": 2048,
+                        "stream": True,
+                    },
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                ) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                                delta = chunk["choices"][0].get("delta", {})
+                                if "content" in delta:
+                                    yield delta["content"]
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                continue
+        except Exception as exc:
+            logger.warning("LLM stream call failed, falling back to mock: %s", exc)
+            yield json.dumps(self._mock_analysis(), ensure_ascii=False)
 
     def _parse_response(self, text: str) -> dict[str, Any]:
         """Parse LLM response JSON, clamp values to 0-1, return structured result."""

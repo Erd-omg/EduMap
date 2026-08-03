@@ -1,0 +1,131 @@
+{
+  "_meta": {
+    "description": "手工标注的学生真实提问评测数据集 — 用于 RAG 检索质量评估",
+    "course_id": "cs201",
+    "course_name": "数据结构与算法",
+    "created_at": "2026-07-27",
+    "n_queries": 20
+  },
+  "queries": [
+    {
+      "query": "数组和链表有什么区别？在插入操作上哪个更快？",
+      "relevant_kp_ids": ["kp-array", "kp-linkedlist"],
+      "expected_answer_points": ["数组连续内存", "链表不连续", "数组插入O(n)", "链表插入O(1)"],
+      "difficulty": "basic"
+    },
+    {
+      "query": "栈和队列的应用场景分别是什么？",
+      "relevant_kp_ids": ["kp-stack", "kp-queue"],
+      "expected_answer_points": ["栈用于函数调用", "栈用于括号匹配", "队列用于BFS", "队列用于任务调度"],
+      "difficulty": "basic"
+    },
+    {
+      "query": "什么是二叉搜索树？它的查找时间复杂度是多少？",
+      "relevant_kp_ids": ["kp-tree", "kp-bst"],
+      "expected_answer_points": ["左子树小于根", "右子树大于根", "平均O(log n)", "最坏O(n)"],
+      "difficulty": "basic"
+    },
+    {
+      "query": "快速排序和归并排序的时间复杂度分别是多少？哪个更稳定？",
+      "relevant_kp_ids": ["kp-sort-quick", "kp-sort-merge"],
+      "expected_answer_points": ["快排平均O(n log n)", "归并O(n log n)", "归并排序稳定", "快排不稳定"],
+      "difficulty": "basic"
+    },
+    {
+      "query": "哈希表是如何解决冲突的？",
+      "relevant_kp_ids": ["kp-hash"],
+      "expected_answer_points": ["链地址法", "开放地址法", "再哈希法"],
+      "difficulty": "basic"
+    },
+    {
+      "query": "图的深度优先遍历和广度优先遍历有什么区别？各自用什么数据结构？",
+      "relevant_kp_ids": ["kp-graph", "kp-stack", "kp-queue"],
+      "expected_answer_points": ["DFS用栈/递归", "BFS用队列", "DFS适合路径搜索", "BFS适合最短路径"],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是平衡二叉树？为什么需要平衡操作？",
+      "relevant_kp_ids": ["kp-tree", "kp-bst"],
+      "expected_answer_points": ["避免退化为链表", "保持O(log n)查找", "AVL树", "红黑树"],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "冒泡排序和选择排序哪个效率更高？它们的区别在哪里？",
+      "relevant_kp_ids": ["kp-sort-bubble", "kp-sort-selection"],
+      "expected_answer_points": ["都是O(n²)", "冒泡可提前结束", "选择交换次数少"],
+      "difficulty": "basic"
+    },
+    {
+      "query": "单链表和双链表有什么区别？在什么情况下应该用双链表？",
+      "relevant_kp_ids": ["kp-linkedlist"],
+      "expected_answer_points": ["单链表单向", "双链表双向", "双链表删除更方便", "双链表占用更多内存"],
+      "difficulty": "basic"
+    },
+    {
+      "query": "如何判断一个链表是否有环？",
+      "relevant_kp_ids": ["kp-linkedlist"],
+      "expected_answer_points": ["快慢指针", "Floyd判圈算法", "哈希集合记录"],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是递归？递归和迭代相比有什么优缺点？",
+      "relevant_kp_ids": ["kp-recursion"],
+      "expected_answer_points": ["递归调用自身", "递归代码简洁", "递归有栈溢出风险", "迭代效率更高"],
+      "difficulty": "basic"
+    },
+    {
+      "query": "二分查找的前提条件是什么？时间复杂度是多少？",
+      "relevant_kp_ids": ["kp-search-binary"],
+      "expected_answer_points": ["要求有序数组", "时间O(log n)", "空间O(1)"],
+      "difficulty": "basic"
+    },
+    {
+      "query": "栈的括号匹配问题怎么解决？",
+      "relevant_kp_ids": ["kp-stack"],
+      "expected_answer_points": ["左括号入栈", "右括号匹配出栈", "最终栈空则匹配"],
+      "difficulty": "basic"
+    },
+    {
+      "query": "图的表示方式有哪些？各有什么优缺点？",
+      "relevant_kp_ids": ["kp-graph"],
+      "expected_answer_points": ["邻接矩阵", "邻接表", "矩阵判断边快", "邻接表节省空间"],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是堆？堆排序的时间复杂度是多少？",
+      "relevant_kp_ids": ["kp-heap"],
+      "expected_answer_points": ["完全二叉树", "大顶堆和小顶堆", "建堆O(n)", "堆排序O(n log n)"],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "拓扑排序有什么用？怎么实现？",
+      "relevant_kp_ids": ["kp-graph", "kp-stack"],
+      "expected_answer_points": ["有向无环图", "课程依赖排序", "Kahn算法", "DFS后序"],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "哈希表查找的平均时间复杂度为什么是O(1)？",
+      "relevant_kp_ids": ["kp-hash"],
+      "expected_answer_points": ["哈希函数直接计算地址", "均匀分布下冲突少", "装填因子影响性能"],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "链表的快慢指针有什么典型应用？",
+      "relevant_kp_ids": ["kp-linkedlist"],
+      "expected_answer_points": ["判断是否有环", "找中间节点", "找倒数第K个节点"],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "动态规划的核心思想是什么？和分治算法有什么区别？",
+      "relevant_kp_ids": ["kp-dp"],
+      "expected_answer_points": ["最优子结构", "重叠子问题", "状态转移方程", "分治不重叠"],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "KMP算法的核心思想是什么？为什么比暴力匹配快？",
+      "relevant_kp_ids": ["kp-search-kmp"],
+      "expected_answer_points": ["利用部分匹配表", "主串不回溯", "时间O(n+m)"],
+      "difficulty": "advanced"
+    }
+  ]
+}

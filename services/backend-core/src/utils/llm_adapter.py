@@ -7,9 +7,13 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
 
 import httpx
+from pydantic import BaseModel, ValidationError
+
+if TYPE_CHECKING:
+    from src.harness.structured import OutputSchema
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +39,75 @@ class BaseLLMAdapter(ABC):
         pass
         yield  # pragma: no cover
 
+    async def generate_structured(
+        self,
+        prompt: str,
+        schema: OutputSchema | type[BaseModel],
+        system_prompt: Optional[str] = None,
+        **kwargs: Any,
+    ) -> BaseModel:
+        """Generate a structured response matching the provided schema.
+
+        Primary mode: function-calling (tool_use) API.
+        Fallback mode: prompt-injected JSON schema + Pydantic parsing.
+
+        Subclasses that support function-calling should override.
+        The default implementation uses prompt-injection mode.
+        """
+        from src.harness.structured import OutputSchema as _OutputSchema
+
+        schema_obj = schema if isinstance(schema, _OutputSchema) else _OutputSchema(schema)
+        instructions = schema_obj.to_prompt_instructions()
+        combined = f"{system_prompt or ''}\n\n{instructions}".strip()
+        response = await self.generate(prompt, system_prompt=combined, **kwargs)
+        return schema_obj.parse(response.content)
+
 
 class SparkAdapter(BaseLLMAdapter):
-    """Placeholder for iFlyTek Spark implementation."""
+    """Placeholder for iFlyTek Spark implementation.
+
+    Falls back to OpenAI-compatible adapter until Spark support is added.
+    """
+
+    def __init__(
+        self,
+        api_key: str = "",
+        api_base: str = "",
+        model: str = "spark",
+        timeout: int = 60,
+        max_retries: int = 3,
+    ) -> None:
+        logger.info(
+            "SparkAdapter: using OpenAI-compatible fallback. "
+            "Set LLM_API_KEY and LLM_API_BASE to an OpenAI-compatible endpoint."
+        )
+        self._fallback = OpenAICompatibleAdapter(
+            api_key=api_key,
+            api_base=api_base,
+            model=model,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
 
     async def generate(
         self, prompt: str, system_prompt: Optional[str] = None, **kwargs
     ) -> LLMResponse:
-        raise NotImplementedError("Spark adapter not implemented yet")
+        return await self._fallback.generate(prompt, system_prompt, **kwargs)
 
     async def generate_stream(
         self, prompt: str, system_prompt: Optional[str] = None, **kwargs
     ) -> AsyncIterator[str]:
-        raise NotImplementedError("Spark adapter not implemented yet")
+        async for chunk in self._fallback.generate_stream(prompt, system_prompt, **kwargs):
+            yield chunk
+
+    async def generate_structured(
+        self,
+        prompt: str,
+        schema: OutputSchema | type[BaseModel],
+        system_prompt: Optional[str] = None,
+        **kwargs: Any,
+    ) -> BaseModel:
+        return await self._fallback.generate_structured(prompt, schema, system_prompt, **kwargs)
 
 
 class OpenAICompatibleAdapter(BaseLLMAdapter):
@@ -56,6 +116,11 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
     Supports both ``generate()`` (full response) and ``generate_stream()``
     (SSE-chunked) via httpx.  Retries on transient failures with exponential
     backoff.  Falls back to a mock response when ``api_key`` is empty.
+
+    Includes a simple circuit breaker: after ``circuit_breaker_threshold``
+    consecutive failures the adapter stops calling the API for
+    ``circuit_breaker_recovery_s`` seconds, returning a degraded response
+    instead.
     """
 
     def __init__(
@@ -65,12 +130,75 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
         model: str = "gpt-4o-mini",
         timeout: int = 60,
         max_retries: int = 3,
+        circuit_breaker_threshold: int = 5,
+        circuit_breaker_recovery_s: int = 60,
     ) -> None:
         self.api_key = api_key
         self.api_base = api_base.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+        # Circuit breaker state
+        self._consecutive_failures = 0
+        self._circuit_open_until: float = 0.0
+        self._circuit_threshold = circuit_breaker_threshold
+        self._circuit_recovery = circuit_breaker_recovery_s
+        # Token usage tracking (extracted from API responses)
+        self._last_usage: dict[str, int] = {}
+        # Rate limiter — max 10 concurrent LLM calls per adapter instance
+        self._rate_limit_semaphore = asyncio.Semaphore(10)
+
+    def _is_circuit_open(self) -> bool:
+        """Check if the circuit breaker is open (API calls suspended)."""
+        import time
+        if self._circuit_open_until == 0.0:
+            return False
+        if time.monotonic() > self._circuit_open_until:
+            logger.info("LLM circuit breaker closed — allowing API calls again")
+            self._circuit_open_until = 0.0
+            self._consecutive_failures = 0
+            return False
+        return True
+
+    def _record_failure(self) -> None:
+        """Increment consecutive failure count, open circuit if threshold reached."""
+        import time
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= self._circuit_threshold:
+            self._circuit_open_until = time.monotonic() + self._circuit_recovery
+            logger.warning(
+                "LLM circuit breaker OPEN — %d consecutive failures, suspending calls for %ds",
+                self._consecutive_failures,
+                self._circuit_recovery,
+            )
+
+    def _record_success(self) -> None:
+        """Reset consecutive failure count on a successful call."""
+        if self._consecutive_failures > 0:
+            self._consecutive_failures = 0
+
+    async def health_check(self) -> dict:
+        """Check if the LLM endpoint is reachable and authenticating correctly.
+
+        Returns:
+            Dict with keys ``reachable`` (bool) and ``detail`` (str).
+        """
+        if not self.api_key:
+            return {"reachable": True, "detail": "mock_mode"}
+        if self._is_circuit_open():
+            return {"reachable": False, "detail": "circuit_open"}
+        url = f"{self.api_base}/models" if self.api_base else "https://api.openai.com/v1/models"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    url,
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                )
+            if resp.status_code == 200:
+                return {"reachable": True, "detail": "ok"}
+            return {"reachable": False, "detail": f"http_{resp.status_code}"}
+        except httpx.RequestError as exc:
+            return {"reachable": False, "detail": str(exc)}
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -80,10 +208,11 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
         system_prompt: Optional[str] = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """Call LLM and return the full response."""
+        """Call LLM and return the full response with usage info."""
         messages = self._build_messages(prompt, system_prompt)
-        text = await self._call_llm(messages, **kwargs)
-        return LLMResponse(content=text, model=self.model)
+        text, usage = await self._call_llm(messages, **kwargs)
+        self._last_usage = usage
+        return LLMResponse(content=text, model=self.model, usage=usage)
 
     async def generate_stream(
         self,
@@ -91,10 +220,105 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
         system_prompt: Optional[str] = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
-        """Stream token chunks from the LLM."""
+        """Stream token chunks from the LLM, tracking last usage."""
+        self._last_usage = {}
         messages = self._build_messages(prompt, system_prompt)
         async for chunk in self._call_llm_stream(messages, **kwargs):
             yield chunk
+
+    async def generate_structured(
+        self,
+        prompt: str,
+        schema: OutputSchema | type[BaseModel],
+        system_prompt: Optional[str] = None,
+        **kwargs: Any,
+    ) -> BaseModel:
+        """Generate structured output with dual-mode strategy.
+
+        1. Function-calling mode (preferred) — uses ``tools`` API param.
+        2. Prompt-injection mode (fallback) — injects schema into prompt.
+        """
+        from src.harness.structured import OutputSchema as _OutputSchema
+
+        schema_obj = schema if isinstance(schema, _OutputSchema) else _OutputSchema(schema)
+
+        # Strategy 1: Function-calling mode
+        try:
+            return await self._generate_structured_via_fc(
+                prompt, schema_obj, system_prompt, **kwargs,
+            )
+        except (NotImplementedError, Exception) as fc_exc:
+            logger.debug(
+                "Function-calling mode failed for %s, falling back: %s",
+                schema_obj.schema_id, fc_exc,
+            )
+
+        # Strategy 2: Prompt-injection mode
+        instructions = schema_obj.to_prompt_instructions()
+        combined = f"{system_prompt or ''}\n\n{instructions}".strip()
+        response = await self.generate(prompt, system_prompt=combined, **kwargs)
+        return schema_obj.parse(response.content)
+
+    async def _generate_structured_via_fc(
+        self,
+        prompt: str,
+        schema: OutputSchema,
+        system_prompt: Optional[str] = None,
+        **kwargs: Any,
+    ) -> BaseModel:
+        """Use OpenAI function-calling API for structured output."""
+        if not self.api_key:
+            raise NotImplementedError("No API key configured for function calling")
+
+        from src.harness.structured import OutputSchema as _OutputSchema
+
+        if isinstance(schema, _OutputSchema):
+            schema_obj = schema
+        else:
+            schema_obj = _OutputSchema(schema)
+
+        messages = self._build_messages(prompt, system_prompt)
+        tool_def = schema_obj.to_function_tool_def()
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "tools": [tool_def],
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": schema_obj.schema_id},
+            },
+            "temperature": kwargs.get("temperature", 0.3),
+        }
+
+        url = f"{self.api_base}/chat/completions" if self.api_base else "https://api.openai.com/v1/chat/completions"
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                url,
+                json=payload,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+            )
+        resp.raise_for_status()
+        data = resp.json()
+
+        try:
+            tool_calls = data["choices"][0]["message"]["tool_calls"]
+            args_str = tool_calls[0]["function"]["arguments"]
+            parsed = json.loads(args_str)
+            # Track token usage from structured output calls
+            usage_data = data.get("usage", {}) or {}
+            self._last_usage = {
+                "prompt_tokens": usage_data.get("prompt_tokens", 0),
+                "completion_tokens": usage_data.get("completion_tokens", 0),
+                "total_tokens": usage_data.get("total_tokens", 0),
+            }
+            return schema_obj.model.model_validate(parsed)
+        except (KeyError, IndexError, json.JSONDecodeError, ValidationError) as exc:
+            from src.harness.errors import StructuredOutputError
+            raise StructuredOutputError(
+                f"Failed to parse function-calling output: {exc}",
+                raw_output=json.dumps(data, ensure_ascii=False),
+            )
 
     # ── Internal ────────────────────────────────────────────────────────
 
@@ -106,13 +330,60 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
         msgs.append({"role": "user", "content": prompt})
         return msgs
 
+    async def _call_with_retry_and_cb(
+        self,
+        method: str,
+        url: str,
+        payload: dict[str, Any],
+    ) -> dict:
+        """Unified LLM call with: circuit breaker → rate limit → retry loop → failure tracking.
+
+        Returns the parsed JSON response dict.  On repeated failure, opens the
+        circuit and either returns a degraded response dict (containing a
+        ``_degraded`` key) or raises ``httpx.HTTPStatusError`` as a last resort.
+        """
+        if self._is_circuit_open():
+            logger.warning("LLM circuit breaker open — returning degraded response")
+            return {"_degraded": True}
+
+        async with self._rate_limit_semaphore:
+            last_exc: Exception | None = None
+            for attempt in range(self.max_retries):
+                try:
+                    async with httpx.AsyncClient(timeout=self.timeout) as client:
+                        resp = await client.request(
+                            method,
+                            url,
+                            json=payload,
+                            headers={"Authorization": f"Bearer {self.api_key}"},
+                        )
+                    if resp.status_code in (429, 500, 502, 503, 504) and attempt < self.max_retries - 1:
+                        wait = 2 ** attempt
+                        logger.warning("LLM transient error %d, retrying in %ds", resp.status_code, wait)
+                        await asyncio.sleep(wait)
+                        continue
+                    resp.raise_for_status()
+                    self._record_success()
+                    return resp.json()
+                except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as exc:
+                    last_exc = exc
+                    if attempt < self.max_retries - 1:
+                        wait = 2 ** attempt
+                        logger.warning("LLM request failed (attempt %d), retrying in %ds: %s", attempt + 1, wait, exc)
+                        await asyncio.sleep(wait)
+                        continue
+
+            self._record_failure()
+            logger.error("LLM call failed after %d retries: %s", self.max_retries, last_exc)
+            return {"_degraded": True}
+
     async def _call_llm(
         self,
         messages: list[dict],
         **kwargs: Any,
-    ) -> str:
+    ) -> tuple[str, dict[str, int]]:
         if not self.api_key:
-            return json.dumps({"note": "Mock response — no LLM API key configured"}, ensure_ascii=False)
+            return self._mock_response(), {}
 
         url = f"{self.api_base}/chat/completions" if self.api_base else "https://api.openai.com/v1/chat/completions"
         payload: dict[str, Any] = {
@@ -122,33 +393,22 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
             "max_tokens": kwargs.get("max_tokens", 2048),
         }
 
-        last_exc: Optional[Exception] = None
-        for attempt in range(self.max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    resp = await client.post(
-                        url,
-                        json=payload,
-                        headers={"Authorization": f"Bearer {self.api_key}"},
-                    )
-                if resp.status_code in (429, 502, 503, 504) and attempt < self.max_retries - 1:
-                    wait = 2 ** attempt
-                    logger.warning("LLM transient error %d, retrying in %ds", resp.status_code, wait)
-                    await asyncio.sleep(wait)
-                    continue
-                resp.raise_for_status()
-                data = resp.json()
-                return data["choices"][0]["message"]["content"]
-            except (httpx.TimeoutException, httpx.RequestError) as exc:
-                last_exc = exc
-                if attempt < self.max_retries - 1:
-                    wait = 2 ** attempt
-                    logger.warning("LLM request failed (attempt %d), retrying in %ds: %s", attempt + 1, wait, exc)
-                    await asyncio.sleep(wait)
-                    continue
-                raise
+        data = await self._call_with_retry_and_cb("POST", url, payload)
+        if data.get("_degraded"):
+            return (
+                "⚠️ AI 服务暂时不可用，请稍后再试。\n\n"
+                "您可以继续浏览已生成的学习资源、查看知识图谱和学习路径。",
+                {},
+            )
 
-        raise RuntimeError(f"LLM call failed after {self.max_retries} retries") from last_exc
+        # Extract token usage from API response
+        usage_data = data.get("usage", {}) or {}
+        usage: dict[str, int] = {
+            "prompt_tokens": usage_data.get("prompt_tokens", 0),
+            "completion_tokens": usage_data.get("completion_tokens", 0),
+            "total_tokens": usage_data.get("total_tokens", 0),
+        }
+        return data["choices"][0]["message"]["content"], usage
 
     async def _call_llm_stream(
         self,
@@ -156,7 +416,18 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         if not self.api_key:
-            yield json.dumps({"note": "Mock response — no LLM API key configured"}, ensure_ascii=False)
+            msg = self._mock_response()
+            CHUNK_SIZE = 12
+            for i in range(0, len(msg), CHUNK_SIZE):
+                yield msg[i:i + CHUNK_SIZE]
+            return
+
+        # For streaming, check circuit breaker + rate limit without calling
+        if self._is_circuit_open():
+            logger.warning("LLM circuit breaker open — returning degraded stream response")
+            degraded = "⚠️ AI 服务暂时不可用，请稍后再试。\n\n您可以继续浏览已生成的学习资源、查看知识图谱和学习路径。"
+            for i in range(0, len(degraded), 12):
+                yield degraded[i:i + 12]
             return
 
         url = f"{self.api_base}/chat/completions" if self.api_base else "https://api.openai.com/v1/chat/completions"
@@ -168,32 +439,68 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
             "stream": True,
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout + 60) as client:
-            async with client.stream(
-                "POST",
-                url,
-                json=payload,
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data_str)
-                            delta = chunk["choices"][0].get("delta", {})
-                            if "content" in delta:
-                                yield delta["content"]
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            continue
+        async with self._rate_limit_semaphore:
+            async with httpx.AsyncClient(timeout=self.timeout + 60) as client:
+                async with client.stream(
+                    "POST", url,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                ) as resp:
+                    try:
+                        resp.raise_for_status()
+                    except httpx.HTTPStatusError:
+                        self._record_failure()
+                        logger.error("LLM stream returned HTTP %d", resp.status_code)
+                        return
+
+                    last_data: dict | None = None
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                                last_data = chunk
+                                delta = chunk["choices"][0].get("delta", {})
+                                content = delta.get("content")
+                                if content is not None:
+                                    yield content
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                continue
+
+            if last_data:
+                usage_data = last_data.get("usage", {}) or last_data.get("x-usage", {}) or {}
+                self._last_usage = {
+                    "prompt_tokens": usage_data.get("prompt_tokens", 0),
+                    "completion_tokens": usage_data.get("completion_tokens", 0),
+                    "total_tokens": usage_data.get("total_tokens", 0),
+                }
+            self._record_success()
+
+    @staticmethod
+    def _mock_response() -> str:
+        """Return a friendly message for mock (no-API-key) mode."""
+        return (
+            "💡 系统当前以演示模式运行（未配置 LLM_API_KEY）。\n\n"
+            "您可以正常使用以下功能：\n"
+            "• 上传学习资料到资源库（系统会解析并索引）\n"
+            "• 查看知识图谱和学习路径\n"
+            "• 浏览已生成的资源\n\n"
+            "如需完整的 AI 对话和资源生成功能，请在 .env 文件中设置 LLM_API_KEY。"
+        )
 
 
 def create_llm(config) -> BaseLLMAdapter:
     """Factory method: returns the appropriate LLM adapter based on config."""
     if config.llm_model == "spark":
-        return SparkAdapter()
+        return SparkAdapter(
+            api_key=getattr(config, "llm_api_key", ""),
+            api_base=getattr(config, "llm_api_base", ""),
+            model="spark",
+            timeout=getattr(config, "llm_timeout", 60),
+            max_retries=getattr(config, "llm_max_retries", 3),
+        )
     return OpenAICompatibleAdapter(
         api_key=config.llm_api_key,
         api_base=config.llm_api_base,

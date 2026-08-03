@@ -1,15 +1,102 @@
 @import "tailwindcss";
 
+/* ===== 莫兰迪色彩体系 ===== */
 @theme {
-  --color-primary: #2563eb;
-  --color-primary-dark: #1d4ed8;
-  --color-secondary: #7c3aed;
-  --color-accent: #f59e0b;
-  --color-surface: #f8fafc;
+  /* 基础色板 — 暖灰莫兰迪基调 */
+  --color-bg-primary: #F5F2EB;
+  --color-bg-secondary: #E8E2D9;
+  --color-bg-card: #FDFCF8;
+  --color-border: #DCD6CD;
+  --color-text-primary: #3D3A36;
+  --color-text-secondary: #7A7368;
+  --color-text-light: #B5ADA1;
+
+  /* 品牌主色 */
+  --color-brand: #A3B5A6;
+  --color-brand-hover: #8FA392;
+  --color-accent: #C4A882;
+
+  /* 功能色（保留饱和度以确保可识别性） */
+  --color-success: #4CAF50;
+  --color-warning: #FFC107;
+  --color-danger: #EF5350;
+  --color-info: #5B8DB8;
+
+  /* 功能色 — 莫兰迪化背景 */
+  --color-success-bg: #D4E8D4;
+  --color-warning-bg: #F5E6C6;
+  --color-danger-bg: #F0D4D4;
+
+  /* 多智能体专属色 */
+  --color-agent-orchestrator: #8FA3A8;
+  --color-agent-planner: #7C8FA3;
+  --color-agent-guardian: #8FA3B5;
+  --color-agent-designer: #C4A89A;
+  --color-agent-coder: #D4A89A;
+  --color-agent-assessment: #A8B5A0;
+  --color-agent-auditor: #B5A8A0;
+  --color-agent-mentor: #8FA3B5;
+
+  /* 遗留兼容（逐步迁移用） */
+  --color-surface: var(--color-bg-primary);
   --color-surface-dark: #0f172a;
+  --color-primary: var(--color-brand);
+  --color-primary-dark: var(--color-brand-hover);
 }
 
-@keyframes pulse-anim {
-  0%, 100% { r: attr(r); filter: drop-shadow(0 0 2px rgba(249, 115, 22, 0.6)); }
-  50% { filter: drop-shadow(0 0 8px rgba(249, 115, 22, 0.9)); }
+/* ===== 全局动画 ===== */
+@keyframes pulse-glow {
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(163, 181, 166, 0.6)); }
+  50% { filter: drop-shadow(0 0 8px rgba(163, 181, 166, 0.9)); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes draw-line {
+  from { stroke-dashoffset: 1000; }
+  to { stroke-dashoffset: 0; }
+}
+
+/* ===== 全局样式 ===== */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text-light);
 }

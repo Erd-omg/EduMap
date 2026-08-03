@@ -7,11 +7,12 @@ import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
   { href: '/', label: '首页', icon: '🏠' },
-  { href: '/chat', label: '对话画像', icon: '💬' },
-  { href: '/generate', label: '资源生成', icon: '⚙️' },
-  { href: '/learn/cs201', label: '学习路径', icon: '📚' },
-  { href: '/mentor', label: 'Mentor', icon: '🎓' },
+  { href: '/chat', label: '对话', icon: '💬' },
+  { href: '/generate', label: '资源库', icon: '📚' },
+  { href: '/learn/cs201', label: '学习路径', icon: '🗺️' },
+  { href: '/dashboard', label: '仪表盘', icon: '📊' },
   { href: '/profile', label: '个人画像', icon: '👤' },
+  { href: '/settings', label: '设置', icon: '⚙️' },
 ];
 
 export function NavBar() {
@@ -42,6 +43,7 @@ export function NavBar() {
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={isActive(item.href) ? 'page' : undefined}
                 className={cn(
                   'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
                   isActive(item.href)
@@ -79,6 +81,7 @@ export function NavBar() {
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={isActive(item.href) ? 'page' : undefined}
                 onClick={() => setMobileOpen(false)}
                 className={cn(
                   'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors',

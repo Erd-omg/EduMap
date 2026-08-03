@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 .pnpm-store/
+.venv/
+venv/
+*.egg-info/
 
 # Build output
 .next/
@@ -26,9 +29,16 @@ __pycache__/
 # Docker
 .sandbox/
 
+# Runtime uploads / test artifacts
+services/backend-core/uploads/
+services/backend-core/.coverage
+
 # Coverage
 coverage/
 .nyc_output/
 
 # TypeScript
 *.tsbuildinfo
+test-results/
+playwright-report/
+playwright/.cache/

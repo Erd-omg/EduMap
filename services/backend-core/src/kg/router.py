@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from src.kg.connection import Neo4jPool
+from src.kg.cold_start_eval import ColdStartEvaluator
 from src.kg.models import (
     DedupResult,
     KnowledgeEdge,
@@ -15,9 +16,8 @@ from src.kg.models import (
     MergeRequest,
     SeedLoadResponse,
 )
-from src.kg.repositories.edge_repo import EdgeRepository
+from src.kg.repositories.edge_repo import EdgeRepository, VALID_RELATION_TYPES
 from src.kg.repositories.knowledge_point_repo import KnowledgePointRepository
-from src.kg.cold_start_eval import ColdStartEvaluator
 from src.kg.seed_loader import SeedLoader
 from src.kg.semantic_dedup import SemanticDedupService
 
@@ -116,6 +116,25 @@ async def delete_node(
 # ── Course Graph ──────────────────────────────────────────────────────
 
 
+@router.get("/courses")
+async def list_courses(
+    request: Request,
+):
+    """List all courses from Neo4j."""
+    pool: Neo4jPool = request.app.state.neo4j_pool
+    query = "MATCH (c:Course) RETURN c.id AS id, c.name AS name, c.description AS description, c.difficulty AS difficulty ORDER BY c.id"
+    result = await pool.execute_read(query)
+    courses = []
+    for row in result:
+        courses.append({
+            "id": row.get("id", ""),
+            "name": row.get("name", ""),
+            "description": row.get("description", ""),
+            "difficulty": row.get("difficulty", 1),
+        })
+    return {"courses": courses, "total": len(courses)}
+
+
 @router.get(
     "/courses/{course_id}/graph",
     response_model=KnowledgeGraphResponse,
@@ -196,6 +215,11 @@ async def create_edge(
     edge_repo: EdgeRepository = Depends(get_edge_repo),
 ):
     """Create a relationship between two knowledge points."""
+    if body.relation_type not in VALID_RELATION_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid relation type '{body.relation_type}'. Allowed: {', '.join(sorted(VALID_RELATION_TYPES))}",
+        )
     created = await edge_repo.create_edge(
         body.source, body.target, body.relation_type
     )
@@ -215,6 +239,11 @@ async def delete_edge(
     edge_repo: EdgeRepository = Depends(get_edge_repo),
 ):
     """Delete a relationship between two knowledge points."""
+    if relation_type not in VALID_RELATION_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid relation type '{relation_type}'. Allowed: {', '.join(sorted(VALID_RELATION_TYPES))}",
+        )
     deleted = await edge_repo.delete_edge(source, target, relation_type)
     if not deleted:
         raise HTTPException(

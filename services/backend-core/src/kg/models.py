@@ -1,8 +1,8 @@
 """Pydantic models for the Knowledge Graph data layer."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, conint
+from pydantic import BaseModel, Field
 
 
 class KnowledgePointBase(BaseModel):
@@ -11,7 +11,7 @@ class KnowledgePointBase(BaseModel):
     id: str
     name: str
     description: str
-    difficulty: conint(ge=1, le=5) = Field(ge=1, le=5)
+    difficulty: Annotated[int, Field(ge=1, le=5)] = Field(ge=1, le=5)
     category: str = ""
     prerequisites: list[str] = []
 

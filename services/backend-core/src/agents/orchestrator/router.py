@@ -13,8 +13,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any
+
+import httpx
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -22,13 +26,22 @@ from pydantic import BaseModel
 
 from src.agents.orchestrator.graph import create_graph
 from src.agents.orchestrator.state import EduMapState, create_initial_state
+from src.memory.short_term import ShortTermMemory
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/orchestrator", tags=["orchestrator"])
 
-# In-memory session store (replace with Redis for production)
-_sessions: dict[str, dict[str, Any]] = {}
+# In-memory SSE event queues (process-local by nature — cannot be serialized to Redis)
+_sse_queues: dict[str, asyncio.Queue] = {}
+
+
+def _get_short_term(request: Request) -> ShortTermMemory | None:
+    """Get the ShortTermMemory from app state."""
+    memory_ops = getattr(request.app.state, "memory_ops", None)
+    if memory_ops:
+        return memory_ops.short_term
+    return None
 
 
 # ── Request / Response models ─────────────────────────────────────────
@@ -67,7 +80,24 @@ async def start_generation(body: GenerateRequest, request: Request):
         task_type=body.task_type,
         knowledge_point_id=body.knowledge_point_id,
     )
-    _sessions[session_id] = {"state": state, "result": None, "events": asyncio.Queue()}
+
+    # Store session state in ShortTermMemory (Redis or in-memory fallback)
+    short_term = _get_short_term(request)
+    if short_term:
+        await short_term.create_session(
+            session_id=session_id,
+            user_id=body.user_id,
+            metadata={
+                "orchestrator_state": state,
+                "orchestrator_result": None,
+            },
+        )
+    else:
+        # Fallback: store in local dict (should not happen — ShortTermMemory has _in_memory_fallback)
+        logger.warning("ShortTermMemory not available — falling back to local storage")
+
+    # SSE events queue stays in-memory (process-local by nature)
+    _sse_queues[session_id] = asyncio.Queue()
 
     # Fire generation in the background
     asyncio.create_task(_run_generation(session_id, request))
@@ -76,27 +106,36 @@ async def start_generation(body: GenerateRequest, request: Request):
 
 
 @router.get("/status/{session_id}")
-async def get_status(session_id: str):
+async def get_status(session_id: str, request: Request):
     """Return the current state snapshot for a generation session."""
-    session = _sessions.get(session_id)
-    if not session:
+    # Load from ShortTermMemory (or fallback)
+    short_term = _get_short_term(request)
+    state_dict = None
+
+    if short_term:
+        session_mem = await short_term.get_session(session_id)
+        if session_mem:
+            state_dict = session_mem.metadata.get("orchestrator_state")
+
+    if not state_dict:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    state = session["state"]
     return {
         "session_id": session_id,
-        "current_phase": state.get("current_phase", "UNKNOWN"),
-        "overall_status": state.get("overall_status", "unknown"),
-        "errors": state.get("errors", []),
+        "current_phase": state_dict.get("current_phase", "UNKNOWN"),
+        "overall_status": state_dict.get("overall_status", "unknown"),
+        "knowledge_point_id": state_dict.get("knowledge_point_id"),
+        "task_input": state_dict.get("task_input", ""),
+        "errors": state_dict.get("errors", []),
         "agent_results": {
-            k: v for k, v in state.get("agent_results", {}).items()
+            k: v for k, v in state_dict.get("agent_results", {}).items()
             if not isinstance(v, dict) or "error" not in v
         },
         "generated_resources": [
             {"type": r.get("type"), "title": r.get("title"), "kp_id": r.get("kp_id")}
-            for r in state.get("generated_resources", [])
+            for r in state_dict.get("generated_resources", [])
         ],
-        "assessment": state.get("assessment_result"),
+        "assessment": state_dict.get("assessment_result"),
     }
 
 
@@ -118,11 +157,9 @@ async def stream_events(session_id: str):
         event: workflow_error
         data: {"agent": "planner", "error": "..."}
     """
-    session = _sessions.get(session_id)
-    if not session:
+    queue: asyncio.Queue | None = _sse_queues.get(session_id)
+    if not queue:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    queue: asyncio.Queue = session["events"]
 
     async def event_generator():
         while True:
@@ -136,7 +173,7 @@ async def stream_events(session_id: str):
                     break
                 yield f"event: {event.get('type', 'message')}\ndata: {json.dumps(event.get('data', event), ensure_ascii=False)}\n\n"
             except asyncio.TimeoutError:
-                yield f"event: heartbeat\ndata: {json.dumps({'ts': 'timeout'})}\n\n"
+                yield f"event: heartbeat\ndata: {json.dumps({'type': 'heartbeat', 'reason': 'timeout', 'timestamp': time.time()})}\n\n"
                 break
 
     return StreamingResponse(
@@ -155,25 +192,125 @@ async def stream_events(session_id: str):
 
 async def _run_generation(session_id: str, request: Request) -> None:
     """Execute the LangGraph state graph and stream events."""
-    session = _sessions.get(session_id)
-    if not session:
+    short_term = _get_short_term(request)
+
+    # Load state from ShortTermMemory
+    state: dict = {}
+    if short_term:
+        session_mem = await short_term.get_session(session_id)
+        if session_mem:
+            state = session_mem.metadata.get("orchestrator_state", {})
+    if not state:
+        logger.error("Session %s not found in ShortTermMemory — aborting", session_id)
         return
 
-    queue: asyncio.Queue = session["events"]
-    state: dict = session["state"]
+    queue: asyncio.Queue = _sse_queues.get(session_id)
+    if not queue:
+        logger.error("SSE queue for session %s not found — aborting", session_id)
+        return
 
     try:
         graph = _get_graph()
 
-        # Push initial event
-        await queue.put({"type": "phase_change", "data": {"phase": "EXTRACT", "agent": "planner"}})
+        # Push initial phase events for each agent
+        phase_labels = {
+            "planner": "EXTRACT",
+            "guardian": "VALIDATE",
+            "designer": "GENERATE",
+            "coder": "GENERATE",
+            "content_auditor": "REVIEW",
+            "assessment": "ASSESS",
+            "assess_degraded": "ASSESS",
+        }
+        for agent_name, phase in phase_labels.items():
+            await queue.put({
+                "type": "phase_change",
+                "data": {"phase": phase, "agent": agent_name},
+            })
 
-        # Run graph (langgraph handles the full pipeline)
-        result = await graph.ainvoke(state)
+        # Run graph via astream — yields state after each node completes,
+        # giving us per-agent progress events.  Wrapped in a hard timeout so
+        # a hung agent/LLM call cannot block the session forever; on timeout
+        # the session is failed so the frontend can offer a retry.
+        final_state: dict | None = None
 
-        # Store result
-        session["state"] = result
-        session["result"] = result
+        async def _graph_runner() -> dict | None:
+            last: dict | None = None
+            # Use stream_mode="updates" so step keys are actual node names
+            async for step in graph.astream(state, stream_mode="updates"):
+                if step is None:
+                    continue
+                last = step
+                # Write every step's update back to the session state so
+                # the GET /status endpoint returns live agent progress
+                # instead of always showing the initial "running" state.
+                for node_name, update in step.items():
+                    if isinstance(update, dict):
+                        state.update(update)
+                for node_name in step:
+                    if node_name in phase_labels:
+                        await queue.put({
+                            "type": "agent_complete",
+                            "data": {
+                                "agent": node_name,
+                                "phase": phase_labels[node_name],
+                            },
+                        })
+            return last
+
+        try:
+            try:
+                final_state = await asyncio.wait_for(_graph_runner(), timeout=300)
+            except AttributeError:
+                # Fallback: astream() not available in this LangGraph version
+                final_state = await graph.ainvoke(state)
+        except TimeoutError:
+            logger.error("Generation %s timed out after 300s — failing session", session_id)
+            state["overall_status"] = "failed"
+            state["errors"] = state.get("errors", []) + [
+                {"agent": "orchestrator", "error": "Generation timed out after 300s", "phase": "UNKNOWN"}
+            ]
+
+        # Use the fully-accumulated state, not the last streamed step — the
+        # final step is only that node's partial update and would lose the
+        # overall_status (e.g. a planner failure reported as "completed").
+        result = state
+        if final_state and isinstance(final_state, dict):
+            result = {**state, **final_state}
+
+        # Store result in ShortTermMemory
+        if short_term:
+            await short_term.update_metadata(session_id, {
+                "orchestrator_state": result,
+                "orchestrator_result": result,
+            })
+
+        # ── Sync generated resources to the resource store ────────────────
+        generated = result.get("generated_resources", [])
+        if generated:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    sync_payload = [
+                        {
+                            "id": r.get("id", f"gen-{session_id}-{i}"),
+                            "user_id": result.get("user_id", "anonymous"),
+                            "name": r.get("title", r.get("type", "resource")),
+                            "type": r.get("type", "explanation"),
+                            "source": "system_generated",
+                            "kp_id": r.get("kp_id"),
+                            "kp_name": r.get("kp_name"),
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "parse_status": "parsed",
+                        }
+                        for i, r in enumerate(generated)
+                    ]
+                    await client.post(
+                        f"http://localhost:8000/api/v1/resources/sync-generated",
+                        json=sync_payload,
+                    )
+                    logger.info("Synced %d generated resources to resource store", len(generated))
+            except Exception as sync_exc:
+                logger.warning("Failed to sync generated resources: %s", sync_exc)
 
         # Push completion
         status = result.get("overall_status", "completed")
@@ -183,10 +320,14 @@ async def _run_generation(session_id: str, request: Request) -> None:
 
     except Exception as exc:
         logger.exception("Generation %s failed", session_id)
-        session["state"]["overall_status"] = "failed"
-        session["state"]["errors"] = session["state"].get("errors", []) + [
+        state["overall_status"] = "failed"
+        state["errors"] = state.get("errors", []) + [
             {"agent": "orchestrator", "error": str(exc), "phase": "UNKNOWN"}
         ]
+        if short_term:
+            await short_term.update_metadata(session_id, {
+                "orchestrator_state": state,
+            })
         await queue.put({
             "type": "workflow_error",
             "data": {"agent": "orchestrator", "error": str(exc)},

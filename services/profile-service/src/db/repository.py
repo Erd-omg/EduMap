@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from src.db.database import DatabasePool
@@ -30,7 +30,7 @@ class ProfileRepository:
 
     async def upsert_profile(self, user_id: str, profile_data: dict) -> dict:
         """Insert or update profile. Increment version on update."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         row = await self.db.fetchrow(
             """INSERT INTO user_profiles (user_id, profile_data, version, updated_at)
                VALUES ($1, $2::jsonb, 1, $3)

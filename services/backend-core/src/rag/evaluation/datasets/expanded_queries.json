@@ -1,0 +1,2696 @@
+{
+  "_meta": {
+    "description": "扩展评测数据集 — 200 条覆盖 22 个知识点的学生提问，用于 RAG 检索质量评估",
+    "course_id": "cs201",
+    "course_name": "数据结构与算法",
+    "created_at": "2026-07-28",
+    "n_queries": 200,
+    "source": "manual + auto-generated"
+  },
+  "queries": [
+    {
+      "query": "数组和链表有什么区别？在插入操作上哪个更快？",
+      "relevant_kp_ids": [
+        "kp-array",
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "数组连续内存",
+        "链表不连续",
+        "数组插入O(n)",
+        "链表插入O(1)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "栈和队列的应用场景分别是什么？",
+      "relevant_kp_ids": [
+        "kp-stack",
+        "kp-queue"
+      ],
+      "expected_answer_points": [
+        "栈用于函数调用",
+        "栈用于括号匹配",
+        "队列用于BFS",
+        "队列用于任务调度"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "什么是二叉搜索树？它的查找时间复杂度是多少？",
+      "relevant_kp_ids": [
+        "kp-tree",
+        "kp-bst"
+      ],
+      "expected_answer_points": [
+        "左子树小于根",
+        "右子树大于根",
+        "平均O(log n)",
+        "最坏O(n)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "快速排序和归并排序的时间复杂度分别是多少？哪个更稳定？",
+      "relevant_kp_ids": [
+        "kp-sort-quick",
+        "kp-sort-merge"
+      ],
+      "expected_answer_points": [
+        "快排平均O(n log n)",
+        "归并O(n log n)",
+        "归并排序稳定",
+        "快排不稳定"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "哈希表是如何解决冲突的？",
+      "relevant_kp_ids": [
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "链地址法",
+        "开放地址法",
+        "再哈希法"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "图的深度优先遍历和广度优先遍历有什么区别？各自用什么数据结构？",
+      "relevant_kp_ids": [
+        "kp-graph",
+        "kp-stack",
+        "kp-queue"
+      ],
+      "expected_answer_points": [
+        "DFS用栈/递归",
+        "BFS用队列",
+        "DFS适合路径搜索",
+        "BFS适合最短路径"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是平衡二叉树？为什么需要平衡操作？",
+      "relevant_kp_ids": [
+        "kp-tree",
+        "kp-bst"
+      ],
+      "expected_answer_points": [
+        "避免退化为链表",
+        "保持O(log n)查找",
+        "AVL树",
+        "红黑树"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "冒泡排序和选择排序哪个效率更高？它们的区别在哪里？",
+      "relevant_kp_ids": [
+        "kp-sort-bubble",
+        "kp-sort-selection"
+      ],
+      "expected_answer_points": [
+        "都是O(n²)",
+        "冒泡可提前结束",
+        "选择交换次数少"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "单链表和双链表有什么区别？在什么情况下应该用双链表？",
+      "relevant_kp_ids": [
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "单链表单向",
+        "双链表双向",
+        "双链表删除更方便",
+        "双链表占用更多内存"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "如何判断一个链表是否有环？",
+      "relevant_kp_ids": [
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "快慢指针",
+        "Floyd判圈算法",
+        "哈希集合记录"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是递归？递归和迭代相比有什么优缺点？",
+      "relevant_kp_ids": [
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "递归调用自身",
+        "递归代码简洁",
+        "递归有栈溢出风险",
+        "迭代效率更高"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "二分查找的前提条件是什么？时间复杂度是多少？",
+      "relevant_kp_ids": [
+        "kp-search-binary"
+      ],
+      "expected_answer_points": [
+        "要求有序数组",
+        "时间O(log n)",
+        "空间O(1)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "栈的括号匹配问题怎么解决？",
+      "relevant_kp_ids": [
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "左括号入栈",
+        "右括号匹配出栈",
+        "最终栈空则匹配"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "图的表示方式有哪些？各有什么优缺点？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "邻接矩阵",
+        "邻接表",
+        "矩阵判断边快",
+        "邻接表节省空间"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是堆？堆排序的时间复杂度是多少？",
+      "relevant_kp_ids": [
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "完全二叉树",
+        "大顶堆和小顶堆",
+        "建堆O(n)",
+        "堆排序O(n log n)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "拓扑排序有什么用？怎么实现？",
+      "relevant_kp_ids": [
+        "kp-graph",
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "有向无环图",
+        "课程依赖排序",
+        "Kahn算法",
+        "DFS后序"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "哈希表查找的平均时间复杂度为什么是O(1)？",
+      "relevant_kp_ids": [
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "哈希函数直接计算地址",
+        "均匀分布下冲突少",
+        "装填因子影响性能"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "链表的快慢指针有什么典型应用？",
+      "relevant_kp_ids": [
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "判断是否有环",
+        "找中间节点",
+        "找倒数第K个节点"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "动态规划的核心思想是什么？和分治算法有什么区别？",
+      "relevant_kp_ids": [
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "最优子结构",
+        "重叠子问题",
+        "状态转移方程",
+        "分治不重叠"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "KMP算法的核心思想是什么？为什么比暴力匹配快？",
+      "relevant_kp_ids": [
+        "kp-search-kmp"
+      ],
+      "expected_answer_points": [
+        "利用部分匹配表",
+        "主串不回溯",
+        "时间O(n+m)"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "什么是时间复杂度和空间复杂度？它们分别衡量算法的什么方面？",
+      "relevant_kp_ids": [
+        "kp-complexity"
+      ],
+      "expected_answer_points": [
+        "时间复杂度衡量运行时间",
+        "空间复杂度衡量内存占用",
+        "用大O表示法",
+        "通常关注最坏情况"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "O(1)、O(n)、O(n²)、O(log n)这些复杂度符号代表什么意思？",
+      "relevant_kp_ids": [
+        "kp-complexity"
+      ],
+      "expected_answer_points": [
+        "O(1)常数时间",
+        "O(n)线性时间",
+        "O(n²)平方时间",
+        "O(log n)对数时间"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "如何分析一个循环嵌套代码的时间复杂度？",
+      "relevant_kp_ids": [
+        "kp-complexity"
+      ],
+      "expected_answer_points": [
+        "外层循环次数乘内层循环次数",
+        "注意循环变量变化",
+        "乘法法则",
+        "分析基本操作执行次数"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "均摊时间复杂度和平均时间复杂度有什么区别？",
+      "relevant_kp_ids": [
+        "kp-complexity"
+      ],
+      "expected_answer_points": [
+        "均摊是平摊每次操作",
+        "平均是期望值",
+        "均摊常用在动态数组",
+        "平均需要概率分布"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "算法的空间复杂度分析中，递归调用栈的空间怎么算？",
+      "relevant_kp_ids": [
+        "kp-complexity",
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "递归深度决定栈空间",
+        "每次调用分配栈帧",
+        "深度为O(n)则空间O(n)",
+        "尾递归可优化"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是算法？算法的五个基本特征是什么？",
+      "relevant_kp_ids": [
+        "kp-intro"
+      ],
+      "expected_answer_points": [
+        "有穷性",
+        "确定性",
+        "可行性",
+        "输入",
+        "输出"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "算法的正确性证明有哪些常用方法？",
+      "relevant_kp_ids": [
+        "kp-intro"
+      ],
+      "expected_answer_points": [
+        "数学归纳法",
+        "循环不变式",
+        "反证法",
+        "构造法证明"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "贪心算法和动态规划的适用范围有什么不同？",
+      "relevant_kp_ids": [
+        "kp-intro",
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "贪心局部最优",
+        "动态规划全局最优",
+        "贪心需要最优子结构+贪心选择性质",
+        "动态规划处理重叠子问题"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "算法设计中有哪些常见的算法范式？",
+      "relevant_kp_ids": [
+        "kp-intro"
+      ],
+      "expected_answer_points": [
+        "分治法",
+        "贪心法",
+        "动态规划",
+        "回溯法",
+        "分支限界法"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "什么是NP困难问题和NP完全问题？它们有什么区别？",
+      "relevant_kp_ids": [
+        "kp-intro"
+      ],
+      "expected_answer_points": [
+        "NP困难至少和NP一样难",
+        "NP完全属于NP且是NP困难的",
+        "P≠NP猜想",
+        "精确解指数时间"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "数组在内存中是如何存储的？为什么随机访问效率高？",
+      "relevant_kp_ids": [
+        "kp-array"
+      ],
+      "expected_answer_points": [
+        "连续内存空间",
+        "通过首地址+偏移量计算",
+        "随机访问O(1)",
+        "loc=base+index*size"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "如何实现一个动态数组？扩容策略是什么？",
+      "relevant_kp_ids": [
+        "kp-array"
+      ],
+      "expected_answer_points": [
+        "不够时申请更大空间",
+        "通常2倍扩容",
+        "数据迁移",
+        "均摊复杂度O(1)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "数组的区间合并问题如何解决？",
+      "relevant_kp_ids": [
+        "kp-array"
+      ],
+      "expected_answer_points": [
+        "按区间起点排序",
+        "遍历合并重叠区间",
+        "更新终点为较大值",
+        "时间O(n log n)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "把数组中所有零移动到末尾，同时保持非零元素相对顺序，怎么解？",
+      "relevant_kp_ids": [
+        "kp-array"
+      ],
+      "expected_answer_points": [
+        "双指针法",
+        "一个指针遍历",
+        "一个指针记录非零位置",
+        "原地交换O(n)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "如何反转一个单向链表？请写出思路。",
+      "relevant_kp_ids": [
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "迭代法三指针",
+        "prev,curr,next",
+        "递归法",
+        "改变指针方向"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "链表的插入排序和数组的插入排序实现上有什么不同？",
+      "relevant_kp_ids": [
+        "kp-linkedlist",
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "链表不需要数据移动",
+        "只需改变指针",
+        "数组需要搬移元素",
+        "链表插入排序空间O(1)"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "为什么要用虚拟头节点（dummy node）简化链表操作？",
+      "relevant_kp_ids": [
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "统一头节点处理",
+        "避免判空",
+        "简化删除操作",
+        "简化插入操作"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "用栈实现表达式求值的具体步骤是什么？",
+      "relevant_kp_ids": [
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "两个栈分别存操作数和运算符",
+        "运算符优先级比较",
+        "括号处理",
+        "中缀转后缀再求值"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "如何实现一个支持获取最小值的栈？",
+      "relevant_kp_ids": [
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "辅助栈存当前最小值",
+        "入栈时比较更新",
+        "出栈时同步更新",
+        "每次获取min为O(1)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "单调栈在解决哪些算法问题时非常有用？",
+      "relevant_kp_ids": [
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "下一个更大元素",
+        "柱状图中最大矩形",
+        "接雨水问题",
+        "维护单调递增或递减序列"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "循环队列如何判断队空和队满？",
+      "relevant_kp_ids": [
+        "kp-queue"
+      ],
+      "expected_answer_points": [
+        "队空条件front==rear",
+        "队满条件(rear+1)%size==front",
+        "牺牲一个存储单元",
+        "或者加size计数"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "阻塞队列是如何实现的？主要用在哪些场景？",
+      "relevant_kp_ids": [
+        "kp-queue"
+      ],
+      "expected_answer_points": [
+        "加锁保证线程安全",
+        "条件变量控制阻塞唤醒",
+        "生产者消费者模式",
+        "线程池任务队列"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "优先级队列的底层通常用什么数据结构实现？",
+      "relevant_kp_ids": [
+        "kp-queue",
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "堆（二叉堆）",
+        "插入O(log n)",
+        "删除O(log n)",
+        "获取最值O(1)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "队列和栈在程序调用过程中分别扮演什么角色？",
+      "relevant_kp_ids": [
+        "kp-queue",
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "栈用于函数调用和返回",
+        "队列用于消息传递",
+        "栈LIFO后进先出",
+        "队列FIFO先进先出"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是二叉树的层序遍历？用队列怎么实现？",
+      "relevant_kp_ids": [
+        "kp-tree",
+        "kp-queue"
+      ],
+      "expected_answer_points": [
+        "根节点入队",
+        "出队访问后子节点入队",
+        "逐层遍历",
+        "BFS思想"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "二叉树的前序、中序、后序遍历分别按照什么顺序访问节点？",
+      "relevant_kp_ids": [
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "前序根左右",
+        "中序左根右",
+        "后序左右根",
+        "递归定义"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "什么是前缀树（Trie）？它的插入和查找时间复杂度是多少？",
+      "relevant_kp_ids": [
+        "kp-tree",
+        "kp-string"
+      ],
+      "expected_answer_points": [
+        "多叉树结构",
+        "共享前缀",
+        "插入O(len)",
+        "查找O(len)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "给定二叉树的前序和中序遍历结果，如何重建二叉树？",
+      "relevant_kp_ids": [
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "前序第一个为根",
+        "中序根左为左子树",
+        "中序根右为右子树",
+        "递归构建"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是红黑树？它的主要性质有哪些？",
+      "relevant_kp_ids": [
+        "kp-tree",
+        "kp-bst"
+      ],
+      "expected_answer_points": [
+        "节点红或黑",
+        "根黑叶黑",
+        "红节点子黑",
+        "任一节点到叶黑节点数相同"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "二叉搜索树的删除操作如何实现？需要考虑哪些情况？",
+      "relevant_kp_ids": [
+        "kp-bst"
+      ],
+      "expected_answer_points": [
+        "叶子节点直接删",
+        "单孩子用孩子替代",
+        "双孩子找后继",
+        "后继为右子树最小节点"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是AVL树？它如何保持平衡？",
+      "relevant_kp_ids": [
+        "kp-bst",
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "平衡因子绝对值≤1",
+        "LL旋转",
+        "RR旋转",
+        "LR和RL双旋转"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "二叉搜索树在插入和查找上的平均表现不错，为什么实际中还需要红黑树？",
+      "relevant_kp_ids": [
+        "kp-bst",
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "BST可能退化为链表",
+        "AVL旋转太频繁",
+        "红黑树平衡要求更松",
+        "插入删除性能更好"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "二叉搜索树的中序遍历结果有什么特点？",
+      "relevant_kp_ids": [
+        "kp-bst",
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "得到升序序列",
+        "左中右顺序",
+        "可用于排序",
+        "时间复杂度O(n)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "二叉搜索树中插入重复元素时应当如何处理？",
+      "relevant_kp_ids": [
+        "kp-bst"
+      ],
+      "expected_answer_points": [
+        "可以约定放左子树或右子树",
+        "也可节点增加计数",
+        "不同实现策略不同",
+        "不影响查找"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "堆的向下调整和向上调整分别用在什么操作中？",
+      "relevant_kp_ids": [
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "向下调整用在删除堆顶",
+        "向上调整用在插入元素",
+        "建堆用向下调整",
+        "向下调整时间复杂度O(log n)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "如何用堆求数据流中的中位数？",
+      "relevant_kp_ids": [
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "一个大顶堆和一个小顶堆",
+        "大顶堆放较小一半",
+        "小顶堆放较大一半",
+        "保持两堆大小平衡"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "大顶堆和小顶堆分别适合解决什么问题？",
+      "relevant_kp_ids": [
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "大顶堆找最大值",
+        "小顶堆找最小值",
+        "堆排序用大顶堆",
+        "优先队列用小顶堆"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "堆和二叉搜索树在结构上有什么不同？",
+      "relevant_kp_ids": [
+        "kp-heap",
+        "kp-bst",
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "堆是左右无大小关系",
+        "BST左小右大",
+        "堆是完全二叉树",
+        "BST不一定是完全二叉树"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "什么是并查集？在图论中有什么作用？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "维护元素集合关系",
+        "查找和合并操作",
+        "路径压缩和按秩合并优化",
+        "判断连通分量和环"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "图的邻接表实现中，如何判断两个顶点是否相邻？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "遍历对应顶点的邻接链表",
+        "平均O(度数)",
+        "最坏O(n)",
+        "用哈希集合可优化为O(1)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "有向图和无向图在算法处理上有什么区别？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "无向图边对称",
+        "有向图边有方向",
+        "无向图度数和2倍边数",
+        "有向图分入度和出度"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "内部排序和外部排序有什么区别？外部排序的主要思想是什么？",
+      "relevant_kp_ids": [
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "内部排序全在内存",
+        "外部排序数据在外存",
+        "外部排序用归并思想",
+        "多路归并减少IO"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "常见的稳定排序算法和不稳定排序算法有哪些？",
+      "relevant_kp_ids": [
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "稳定排序：冒泡、插入、归并",
+        "不稳定排序：选择、快排、堆排",
+        "稳定性指相等元素相对顺序不变",
+        "多关键字排序时重要"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "为什么说没有一种排序算法在所有情况下都是最优的？",
+      "relevant_kp_ids": [
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "不同数据特征适合不同算法",
+        "时间和空间权衡",
+        "稳定性需求",
+        "实现复杂度考量"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "排序算法中的比较模型是什么意思？比较排序为什么下限是O(n log n)？",
+      "relevant_kp_ids": [
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "通过比较决定顺序",
+        "决策树模型",
+        "n!种排列",
+        "树高度至少log(n!)~O(n log n)"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "对于几乎已经有序的数据，哪种排序算法效率最高？",
+      "relevant_kp_ids": [
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "插入排序",
+        "冒泡排序带标志位",
+        "接近O(n)",
+        "快排在有序时反而最差"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "冒泡排序每一轮是在做什么？",
+      "relevant_kp_ids": [
+        "kp-sort-bubble"
+      ],
+      "expected_answer_points": [
+        "相邻元素两两比较",
+        "大的往后冒",
+        "每轮确定一个最大值",
+        "最多n-1轮"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "冒泡排序的比较次数和交换次数分别是多少？",
+      "relevant_kp_ids": [
+        "kp-sort-bubble"
+      ],
+      "expected_answer_points": [
+        "最坏比较n(n-1)/2次",
+        "最坏交换n(n-1)/2次",
+        "最好比较n-1次",
+        "加标志位可提前结束"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "选择排序为什么不稳定？能给出一个例子吗？",
+      "relevant_kp_ids": [
+        "kp-sort-selection"
+      ],
+      "expected_answer_points": [
+        "远距离交换破坏稳定性",
+        "例如[5,5,3]",
+        "3和第一个5交换改变相对顺序",
+        "相等元素无法保持原顺序"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "选择排序和冒泡排序谁的交换次数更少？",
+      "relevant_kp_ids": [
+        "kp-sort-selection",
+        "kp-sort-bubble"
+      ],
+      "expected_answer_points": [
+        "选择排序每轮最多一次交换",
+        "冒泡排序每轮多次交换",
+        "选择排序交换次数更少",
+        "选择排序比较次数相同"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "快速排序在数组已经有序的情况下性能如何？如何优化？",
+      "relevant_kp_ids": [
+        "kp-sort-quick"
+      ],
+      "expected_answer_points": [
+        "退化为O(n²)",
+        "分区极不平衡",
+        "随机选基准",
+        "三数取中法选基准"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "快速排序的三路切分是什么？解决了什么问题？",
+      "relevant_kp_ids": [
+        "kp-sort-quick"
+      ],
+      "expected_answer_points": [
+        "分为小于、等于、大于三部分",
+        "处理大量重复元素",
+        "减少递归深度",
+        "重复元素多时性能好"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "归并排序的合并步骤是如何工作的？",
+      "relevant_kp_ids": [
+        "kp-sort-merge"
+      ],
+      "expected_answer_points": [
+        "双指针比较两个有序数组",
+        "取较小放入结果",
+        "处理剩余元素",
+        "时间O(n)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "归并排序在处理链表排序时有什么优势？",
+      "relevant_kp_ids": [
+        "kp-sort-merge",
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "链表不需要额外空间合并",
+        "直接改变指针",
+        "空间复杂度O(1)",
+        "自然适合归并思想"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "线性查找在什么情况下比二分查找更快？",
+      "relevant_kp_ids": [
+        "kp-search",
+        "kp-search-binary"
+      ],
+      "expected_answer_points": [
+        "数据量小时",
+        "数据无序时",
+        "二分需要排序预处理",
+        "线性查找不要求有序"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "常见的文件查找算法有哪些？",
+      "relevant_kp_ids": [
+        "kp-search"
+      ],
+      "expected_answer_points": [
+        "顺序查找",
+        "索引查找",
+        "哈希查找",
+        "树形查找"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "索引查找需要什么前提条件？和二分查找相比有什么不同？",
+      "relevant_kp_ids": [
+        "kp-search",
+        "kp-search-binary"
+      ],
+      "expected_answer_points": [
+        "需要建立索引表",
+        "索引表有序",
+        "先查索引再查数据块",
+        "适合大数据量"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "二分查找的边界条件（left<right 还是 left<=right）怎么处理？",
+      "relevant_kp_ids": [
+        "kp-search-binary"
+      ],
+      "expected_answer_points": [
+        "闭区间left<=right",
+        "左闭右开left<right",
+        "取决于初始化",
+        "死循环需注意mid取整方向"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "二分查找的mid计算为什么推荐用 left + (right-left)/2 而不是 (left+right)/2？",
+      "relevant_kp_ids": [
+        "kp-search-binary"
+      ],
+      "expected_answer_points": [
+        "防止整数溢出",
+        "left+right可能超过int范围",
+        "结果相同",
+        "安全编码习惯"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "如何在有序矩阵中应用二分查找？",
+      "relevant_kp_ids": [
+        "kp-search-binary",
+        "kp-array"
+      ],
+      "expected_answer_points": [
+        "将矩阵展开为一维数组",
+        "或逐行二分",
+        "或从左下角/Z字形查找",
+        "时间O(log(mn))或O(m+n)"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "KMP算法中，模式串的next数组有什么物理意义？",
+      "relevant_kp_ids": [
+        "kp-search-kmp"
+      ],
+      "expected_answer_points": [
+        "最长相同前后缀长度",
+        "匹配失败时跳转位置",
+        "避免主串回溯",
+        "记录已匹配信息"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "KMP算法匹配失败时next数组如何指导跳转？",
+      "relevant_kp_ids": [
+        "kp-search-kmp"
+      ],
+      "expected_answer_points": [
+        "移动到next[j]位置继续匹配",
+        "利用已匹配部分的前后缀相同",
+        "模式串滑动而非主串回溯",
+        "时间复杂度O(n+m)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "哈希表中，链地址法的链表太长会影响性能，如何解决？",
+      "relevant_kp_ids": [
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "扩容重新哈希",
+        "转红黑树（Java 8+）",
+        "改进哈希函数",
+        "选择合适装填因子"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "哈希表的扩容过程是怎样的？需要重新哈希所有元素吗？",
+      "relevant_kp_ids": [
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "达到阈值后扩容",
+        "创建更大的桶数组",
+        "全部元素重新哈希",
+        "均摊代价O(1)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "哈希表在不同编程语言中的实现有什么差异？",
+      "relevant_kp_ids": [
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "Java HashMap用链地址+红黑树",
+        "Python dict用开放地址",
+        "C++ unordered_map用链地址",
+        "Go map用桶+溢出"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "递归函数的内存开销大概是什么样的？",
+      "relevant_kp_ids": [
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "每层调用分配栈帧",
+        "存储局部变量和返回地址",
+        "深度越大内存开销越大",
+        "递归深度过大导致栈溢出"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "所有递归都能改写成迭代吗？改写的关键是什么？",
+      "relevant_kp_ids": [
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "理论上都可以改写",
+        "用栈模拟递归",
+        "尾递归可直接改循环",
+        "核心是手动管理调用栈"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "回溯法和纯递归有什么联系与区别？",
+      "relevant_kp_ids": [
+        "kp-recursion",
+        "kp-dp",
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "回溯是在递归基础上撤销选择",
+        "回溯遍历所有可能解",
+        "回溯有剪枝优化",
+        "回溯通常用于搜索问题"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "动态规划的三要素是什么？",
+      "relevant_kp_ids": [
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "最优子结构",
+        "状态转移方程",
+        "重叠子问题",
+        "有边界条件"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "零钱兑换问题的DP解法是什么？",
+      "relevant_kp_ids": [
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "dp[i]表示凑i元最少硬币数",
+        "dp[i]=min(dp[i-coin]+1)",
+        "初始化dp[0]=0",
+        "完全背包问题"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "01背包问题和完全背包问题的区别是什么？",
+      "relevant_kp_ids": [
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "01背包每个物品选一次",
+        "完全背包无限次",
+        "遍历顺序不同",
+        "完全背包正序遍历容量"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "如何判断一个问题是否可以用动态规划求解？",
+      "relevant_kp_ids": [
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "最优化问题",
+        "有无最优子结构",
+        "有无重叠子问题",
+        "有无后效性"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "区间DP的典型问题有哪些？举个实际例子。",
+      "relevant_kp_ids": [
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "石子合并问题",
+        "矩阵链乘法",
+        "回文子串划分",
+        "状态dp[i][j]表示区间[i,j]"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "什么是最长递增子序列问题？如何用DP求解？",
+      "relevant_kp_ids": [
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "LIS问题",
+        "dp[i]表示以i结尾最长递增子序列长度",
+        "dp[i]=max(dp[j]+1) for j<i and a[j]<a[i]",
+        "可用二分优化到O(n log n)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "使用动态规划时如何优化空间复杂度？有什么常用技巧？",
+      "relevant_kp_ids": [
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "滚动数组",
+        "只用前一维状态",
+        "状态压缩",
+        "注意覆盖顺序"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "字符串匹配的暴力算法时间复杂度是多少？",
+      "relevant_kp_ids": [
+        "kp-string"
+      ],
+      "expected_answer_points": [
+        "最坏O(n*m)",
+        "逐个位置匹配",
+        "主串回溯",
+        "优点是实现简单"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "字符串反转的常见方法有哪些？",
+      "relevant_kp_ids": [
+        "kp-string"
+      ],
+      "expected_answer_points": [
+        "双指针交换",
+        "使用栈",
+        "递归反转",
+        "原地反转"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "判断括号字符串是否有效，为什么用栈比用计数器更通用？",
+      "relevant_kp_ids": [
+        "kp-string",
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "栈能处理多种括号类型",
+        "计数器只能处理一种",
+        "栈确保括号匹配顺序",
+        "栈是经典解法"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "字符串的滑动窗口技巧通常用来解决什么问题？",
+      "relevant_kp_ids": [
+        "kp-string"
+      ],
+      "expected_answer_points": [
+        "最长无重复子串",
+        "最小覆盖子串",
+        "字符串排列匹配",
+        "左右边界移动维护窗口"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "大规模文本中查找模式串有哪些高效算法？",
+      "relevant_kp_ids": [
+        "kp-string",
+        "kp-search-kmp"
+      ],
+      "expected_answer_points": [
+        "KMP算法O(n+m)",
+        "BM算法实际更快",
+        "Rabin-Karp哈希匹配",
+        "多模式串可用AC自动机"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "从内存占用、访问速度、插入删除效率等方面对比数组和链表。",
+      "relevant_kp_ids": [
+        "kp-array",
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "数组内存连续",
+        "链表有指针额外开销",
+        "数组随机访问O(1)",
+        "链表插入删除O(1)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "树的DFS用递归，图的DFS也可以用递归，有什么本质上的共同点？",
+      "relevant_kp_ids": [
+        "kp-tree",
+        "kp-graph",
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "都基于递归思想",
+        "树天然无环",
+        "图需要visited标记",
+        "都尽量深入再回溯"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "各种查找算法（顺序查找、二分查找、哈希查找、树查找）的适用场景分别是什么？",
+      "relevant_kp_ids": [
+        "kp-search",
+        "kp-search-binary",
+        "kp-hash",
+        "kp-bst"
+      ],
+      "expected_answer_points": [
+        "顺序查找适合小数据",
+        "二分查找适合有序静态数据",
+        "哈希查找适合键值对",
+        "树查找适合动态数据"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "分治、回溯、动态规划这三种算法思想有什么异同？",
+      "relevant_kp_ids": [
+        "kp-dp",
+        "kp-recursion",
+        "kp-intro"
+      ],
+      "expected_answer_points": [
+        "分治分解后合并",
+        "回溯DFS+剪枝",
+        "DP最优子结构+重叠子问题",
+        "都基于递归思想"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "有哪些数据结构可以用来表示图？哪种在什么场景下更合适？",
+      "relevant_kp_ids": [
+        "kp-graph",
+        "kp-array",
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "邻接矩阵适合稠密图",
+        "邻接表适合稀疏图",
+        "边集数组适合Kruskal",
+        "十字链表适合有向图"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "排序算法在工程实践中通常如何选择？需要考虑哪些因素？",
+      "relevant_kp_ids": [
+        "kp-sort",
+        "kp-complexity"
+      ],
+      "expected_answer_points": [
+        "数据规模",
+        "数据是否基本有序",
+        "稳定性要求",
+        "空间限制"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "队列。",
+      "relevant_kp_ids": [
+        "kp-queue"
+      ],
+      "expected_answer_points": [
+        "先进先出FIFO",
+        "入队enqueue",
+        "出队dequeue",
+        "循环队列解决假溢出"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "快排和归并排序在实际应用中的优缺点分别有哪些？",
+      "relevant_kp_ids": [
+        "kp-sort-quick",
+        "kp-sort-merge"
+      ],
+      "expected_answer_points": [
+        "快排平均快",
+        "归并稳定",
+        "归并空间O(n)",
+        "快排最坏O(n²)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "比较数组和链表在CPU缓存利用上的差异。",
+      "relevant_kp_ids": [
+        "kp-array",
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "数组空间连续缓存友好",
+        "链表节点分散缓存命中率低",
+        "数组预取效率高",
+        "大数据遍历数组更快"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "怎么判断一个字符串是不是回文？用栈怎么实现？",
+      "relevant_kp_ids": [
+        "kp-string",
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "回文正反读相同",
+        "一半字符入栈",
+        "栈弹出与另一半比较",
+        "双指针更简洁"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "为什么哈希表查找是O(1)而二叉搜索树是O(log n)？根本区别是什么？",
+      "relevant_kp_ids": [
+        "kp-hash",
+        "kp-bst"
+      ],
+      "expected_answer_points": [
+        "哈希函数直接计算位置",
+        "树需要逐层比较",
+        "哈希以空间换时间",
+        "哈希不保持顺序"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "图和树都可以用来建模，什么时候该用图什么时候该用树？",
+      "relevant_kp_ids": [
+        "kp-graph",
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "层次关系用树",
+        "任意关系用图",
+        "树无环",
+        "图可以有环"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "KMP的next数组到底存的是什么？有什么物理意义？",
+      "relevant_kp_ids": [
+        "kp-search-kmp"
+      ],
+      "expected_answer_points": [
+        "最长相同前后缀的长度",
+        "匹配失败后的跳转位置",
+        "next[0]通常为-1或0",
+        "避免主串回溯"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "讲一下排序算法和时间复杂度的关系，最好能对比说明。",
+      "relevant_kp_ids": [
+        "kp-sort",
+        "kp-complexity"
+      ],
+      "expected_answer_points": [
+        "O(n²):冒泡选择插入",
+        "O(n log n):快排归并堆排",
+        "O(n):计数桶排序",
+        "对比说明各算法特点"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "怎么理解哈希表中的装填因子？0.75这个值是怎么来的？",
+      "relevant_kp_ids": [
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "装填因子=元素数/桶数",
+        "权衡时间和空间",
+        "0.75是经验值",
+        "太高冲突多太低浪费空间"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "堆的建立过程是自上而下还是自下而上调整？为什么？",
+      "relevant_kp_ids": [
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "自下而上",
+        "从最后一个非叶子节点开始",
+        "向下调整每个节点",
+        "时间复杂度O(n)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "链表的排序为什么用归并排序比快速排序更合适？",
+      "relevant_kp_ids": [
+        "kp-linkedlist",
+        "kp-sort-merge",
+        "kp-sort-quick"
+      ],
+      "expected_answer_points": [
+        "链表不支持随机访问",
+        "快排需要随机选基准",
+        "归并链表合并不需要额外空间",
+        "归并链表实现自然"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "二叉搜索树中查找第k小的元素有哪些方法？",
+      "relevant_kp_ids": [
+        "kp-bst"
+      ],
+      "expected_answer_points": [
+        "中序遍历找第k个",
+        "每个节点记录子树大小",
+        "递归判断k与左子树大小",
+        "时间O(h)或O(n)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "图的连通分量如何计算？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "DFS或BFS遍历",
+        "每次从一个未访问节点开始",
+        "遍历次数即连通分量数",
+        "并查集也可求"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "循环队列为什么比普通顺序队列更高效？",
+      "relevant_kp_ids": [
+        "kp-queue"
+      ],
+      "expected_answer_points": [
+        "普通队列假溢出",
+        "循环队列复用空间",
+        "不需要数据搬移",
+        "头尾下标模运算"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "用动态规划求解最大子数组和问题，状态转移方程是什么？",
+      "relevant_kp_ids": [
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "dp[i]是以i结尾的最大子数组和",
+        "dp[i]=max(dp[i-1]+a[i], a[i])",
+        "最终结果max(dp)",
+        "空间可优化为O(1)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "递归深度优先搜索在图遍历中如何避免死循环？",
+      "relevant_kp_ids": [
+        "kp-graph",
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "记录已访问节点visited",
+        "递归前标记",
+        "递归后可选回溯撤销",
+        "避免重复访问"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "二分查找的递归和非递归实现哪个更好？",
+      "relevant_kp_ids": [
+        "kp-search-binary",
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "非递归效率更高",
+        "递归代码更简洁",
+        "非递归无栈溢出风险",
+        "实际常用非递归"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "什么是桶排序？和计数排序有什么关系？",
+      "relevant_kp_ids": [
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "桶排序将数据分到桶中",
+        "桶内再排序",
+        "计数排序是桶排序特例",
+        "都适合数据范围有限"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "用栈和队列分别实现树的遍历有什么不同？",
+      "relevant_kp_ids": [
+        "kp-tree",
+        "kp-stack",
+        "kp-queue"
+      ],
+      "expected_answer_points": [
+        "栈实现DFS",
+        "队列实现BFS",
+        "栈模拟递归前中后序",
+        "队列做层序遍历"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "字符串数组的前缀匹配问题如何高效解决？",
+      "relevant_kp_ids": [
+        "kp-string",
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "用Trie前缀树",
+        "公共前缀共享节点",
+        "查找O(len)",
+        "支持前缀搜索和自动补全"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "堆在操作系统中有什么应用？比如内存管理。",
+      "relevant_kp_ids": [
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "优先队列调度",
+        "堆内存管理",
+        "定时器管理",
+        "事件驱动中的优先级处理"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "贪心算法一定能得到全局最优解吗？什么时候可以？",
+      "relevant_kp_ids": [
+        "kp-intro"
+      ],
+      "expected_answer_points": [
+        "不是所有问题都能",
+        "需最优子结构+贪心选择性质",
+        "如哈夫曼编码可以",
+        "如零钱兑换可能不行"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "在二叉树中找两个节点的最低公共祖先，有哪些方法？",
+      "relevant_kp_ids": [
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "递归查找",
+        "记录根到节点路径",
+        "利用父指针",
+        "时间O(n)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是拓扑排序？是不是只能用在有向无环图上？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "顶点线性排序",
+        "有向边从前往后",
+        "有环无法拓扑排序",
+        "可用于检测环"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "数组的全排列问题如何用回溯法解决？",
+      "relevant_kp_ids": [
+        "kp-array",
+        "kp-recursion",
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "递归枚举每个位置",
+        "交换法或used数组",
+        "回溯撤销选择",
+        "时间O(n!)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "怎么合并K个有序链表？有哪些方法？哪种效率最高？",
+      "relevant_kp_ids": [
+        "kp-linkedlist",
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "逐一合并",
+        "分治两两合并",
+        "用最小堆每次取最小",
+        "堆方法效率最高O(n log k)"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "图的Dijkstra算法中，用堆优化为什么能降低时间复杂度？",
+      "relevant_kp_ids": [
+        "kp-graph",
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "朴素版每次找最小O(n)",
+        "堆O(log n)取出最小",
+        "堆优化总时间O((V+E)log V)",
+        "稀疏图优势明显"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "归并排序可以用来计算逆序对吗？怎么实现？",
+      "relevant_kp_ids": [
+        "kp-sort-merge"
+      ],
+      "expected_answer_points": [
+        "在合并时统计",
+        "左半元素大于右半时计数",
+        "归并过程自然统计",
+        "时间O(n log n)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "数组的寻址公式是什么？对理解数组有何帮助？",
+      "relevant_kp_ids": [
+        "kp-array"
+      ],
+      "expected_answer_points": [
+        "loc=base+index*size",
+        "解释随机访问O(1)",
+        "连续内存要求",
+        "多维数组公式类似"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "双向链表和双向循环链表有什么区别？",
+      "relevant_kp_ids": [
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "双向链表头尾不连",
+        "循环链表尾连头",
+        "循环链表从任何节点可遍历全部",
+        "判空条件不同"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "括号匹配问题为什么用栈来解决？不用栈可以吗？",
+      "relevant_kp_ids": [
+        "kp-stack",
+        "kp-string"
+      ],
+      "expected_answer_points": [
+        "栈天然匹配后进先出",
+        "左括号入栈右括号匹配出栈",
+        "计数器只能处理一种括号",
+        "多种括号必须用栈"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "抽象数据类型（ADT）的概念是什么？队列作为ADT有哪些操作？",
+      "relevant_kp_ids": [
+        "kp-queue",
+        "kp-intro"
+      ],
+      "expected_answer_points": [
+        "ADT是数据类型抽象描述",
+        "队列ADT有enqueue",
+        "dequeue操作",
+        "isEmpty和peek等"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "NP完全问题的求解有什么实际可行的方法？",
+      "relevant_kp_ids": [
+        "kp-intro"
+      ],
+      "expected_answer_points": [
+        "近似算法",
+        "启发式算法",
+        "参数化算法",
+        "特殊实例多项式解法"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "二叉树的右视图问题如何用层序遍历解决？",
+      "relevant_kp_ids": [
+        "kp-tree",
+        "kp-queue"
+      ],
+      "expected_answer_points": [
+        "层序遍历每层最后一个节点",
+        "队列记录每层节点数",
+        "遍历一层时取最后一个",
+        "时间O(n)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "字符串中的单词反转问题怎么解？",
+      "relevant_kp_ids": [
+        "kp-string"
+      ],
+      "expected_answer_points": [
+        "先整体反转",
+        "再逐个单词反转",
+        "去除多余空格",
+        "或者用栈存储单词"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "动态规划的时间复杂度通常如何分析？和状态数有什么关系？",
+      "relevant_kp_ids": [
+        "kp-dp",
+        "kp-complexity"
+      ],
+      "expected_answer_points": [
+        "状态数乘以每个状态转移时间",
+        "状态维度决定空间",
+        "状态转移方程影响时间",
+        "优化常从状态维度入手"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是计数排序？它的时间和空间复杂度各是多少？",
+      "relevant_kp_ids": [
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "统计元素出现次数",
+        "时间O(n+k)",
+        "空间O(k)",
+        "k为数据范围"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "KMP、Sunday、BM算法之间有什么区别和联系？",
+      "relevant_kp_ids": [
+        "kp-search-kmp"
+      ],
+      "expected_answer_points": [
+        "都是字符串匹配算法",
+        "KMP从左到右",
+        "BM从右到左",
+        "Sunday匹配后跳转"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "哈希表中删除元素时需要注意什么？特别是在开放地址法中。",
+      "relevant_kp_ids": [
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "不能直接删除",
+        "用删除标记",
+        "否则破坏查找链",
+        "惰性删除重新插入"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "排序中的部分排序是什么意思？在什么场景下需要？",
+      "relevant_kp_ids": [
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "只关心前k个有序",
+        "如TopK问题",
+        "堆排序或快排partition",
+        "不需要全部排好"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "分治算法和递归的关系是什么？所有分治算法都是递归的吗？",
+      "relevant_kp_ids": [
+        "kp-intro",
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "分治通常用递归实现",
+        "也可用迭代",
+        "递归是实现工具",
+        "分治是设计思想"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "图的存储中，邻接表和邻接矩阵在边的遍历上有什么性能差异？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "邻接矩阵遍历顶点所有边O(n)",
+        "邻接表遍历边O(度数)",
+        "邻接表遍历出入边更灵活",
+        "邻接矩阵适合频繁判断边存在"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "堆的删除操作为什么只能直接删除堆顶元素？",
+      "relevant_kp_ids": [
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "堆只保证堆顶最值",
+        "内部元素无序",
+        "删除非堆顶需O(n)查找",
+        "堆设计就是快速获取最值"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "AVL树的旋转操作有哪几种？分别什么时候用到？",
+      "relevant_kp_ids": [
+        "kp-bst",
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "LL左左:右旋",
+        "RR右右:左旋",
+        "LR左右:先左后右",
+        "RL右左:先右后左"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "递归求解汉诺塔问题的思路是什么？",
+      "relevant_kp_ids": [
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "n-1个从A移到B",
+        "最大盘从A移到C",
+        "n-1个从B移到C",
+        "递归公式T(n)=2T(n-1)+1"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "队列在生产者-消费者模式中起到什么作用？",
+      "relevant_kp_ids": [
+        "kp-queue"
+      ],
+      "expected_answer_points": [
+        "解耦生产者和消费者",
+        "缓冲数据",
+        "平衡处理速度差异",
+        "支持并发安全"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "数组和链表的插入在理论上有很大的时间差距，实际中差距大吗？为什么？",
+      "relevant_kp_ids": [
+        "kp-array",
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "数组需要搬移元素",
+        "链表只需要改指针",
+        "但链表节点分配也有开销",
+        "缓存不命中会拖慢链表"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "最大堆插入一个元素的时间复杂度是多少？最坏情况呢？",
+      "relevant_kp_ids": [
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "插入O(log n)",
+        "向上调整到根",
+        "最坏O(log n)",
+        "最好O(1)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "二分查找可以处理重复元素吗？如何找到重复元素的第一个位置？",
+      "relevant_kp_ids": [
+        "kp-search-binary"
+      ],
+      "expected_answer_points": [
+        "可以处理",
+        "找到目标后继续往左找",
+        "left边界不断收缩",
+        "变种二分查找"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "为什么很多排序算法的最好时间复杂度是O(n)？有哪些排序能做到？",
+      "relevant_kp_ids": [
+        "kp-sort",
+        "kp-sort-bubble"
+      ],
+      "expected_answer_points": [
+        "冒泡排序加标志位",
+        "插入排序数据基本有序",
+        "最好情况只比较不交换",
+        "数据已有序时"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "用哈希表和数组配合能实现什么数据结构？举例说明。",
+      "relevant_kp_ids": [
+        "kp-hash",
+        "kp-array"
+      ],
+      "expected_answer_points": [
+        "LRU缓存",
+        "哈希表存位置映射",
+        "数组存数据",
+        "实现O(1)访问和删除"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是字符串的哈希？如何快速判断子串是否相等？",
+      "relevant_kp_ids": [
+        "kp-string",
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "字符串转为整数值",
+        "滚动哈希O(1)计算子串",
+        "注意哈希碰撞",
+        "配合前缀哈希"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "如何判断一个图是二分图？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "染色法",
+        "相邻顶点不同色",
+        "BFS/DFS遍历染色",
+        "有矛盾则不是二分图"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "二叉树的中序遍历结果和二叉搜索树有什么关系？",
+      "relevant_kp_ids": [
+        "kp-tree",
+        "kp-bst"
+      ],
+      "expected_answer_points": [
+        "BST中序遍历有序",
+        "升序序列",
+        "验证BST的方法",
+        "时间O(n)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "链表的归并排序需要额外空间吗？空间复杂度是多少？",
+      "relevant_kp_ids": [
+        "kp-linkedlist",
+        "kp-sort-merge"
+      ],
+      "expected_answer_points": [
+        "链表归并排序空间O(1)",
+        "不需要辅助数组",
+        "递归栈空间O(log n)",
+        "通过指针操作合并"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "用栈实现浏览器的前进后退功能，原理是什么？",
+      "relevant_kp_ids": [
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "两个栈实现",
+        "前进栈和后退栈",
+        "新页面压入后退栈清空前进栈",
+        "前进后退对应出栈入栈"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "快速排序的partition可以用在哪些其他算法中？比如找第k大元素。",
+      "relevant_kp_ids": [
+        "kp-sort-quick"
+      ],
+      "expected_answer_points": [
+        "快速选择找第k大",
+        "partition划分区间",
+        "平均O(n)",
+        "快速排序的核心子过程"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "如果哈希表冲突很多，性能会退化到什么程度？如何进行扩容？",
+      "relevant_kp_ids": [
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "退化为O(n)查找",
+        "链表过长",
+        "超过阈值触发扩容",
+        "重新哈希迁移数据"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "图的邻接表中，每条边存储了什么信息？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "邻接顶点",
+        "权值（如有）",
+        "指向下一条边的指针",
+        "有向图可存弧头弧尾"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "最短路径算法中，Dijkstra的贪心策略是什么？为什么不能处理负权边？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "每次选当前距离最小的顶点",
+        "处理过的顶点不再更新",
+        "负权边会导致已确定的不再最小",
+        "负权用Bellman-Ford"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "选择排序每轮必须找到最小元素吗？还是找最大也可以？",
+      "relevant_kp_ids": [
+        "kp-sort-selection"
+      ],
+      "expected_answer_points": [
+        "找最小或最大都可以",
+        "升序通常找最小放前面",
+        "也可找最大放后面",
+        "排序顺序决定"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "栈帧（stack frame）和数据结构中的栈有什么关系？",
+      "relevant_kp_ids": [
+        "kp-stack",
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "函数调用栈是栈的实际应用",
+        "每次调用压入栈帧",
+        "返回时弹出",
+        "栈帧包含参数返回地址局部变量"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "树的深度和高度有什么区别？如何计算？",
+      "relevant_kp_ids": [
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "深度从根往下数",
+        "高度从叶子往上数",
+        "根深度为0或1",
+        "树的高度等于根深度"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "查找算法中，为什么说哈希查找是O(1)但实际并不总是最快？",
+      "relevant_kp_ids": [
+        "kp-hash",
+        "kp-search"
+      ],
+      "expected_answer_points": [
+        "哈希函数计算有开销",
+        "冲突影响性能",
+        "数据少时顺序查找更快",
+        "装填因子高时退化"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "动态规划和记忆化搜索有什么区别？哪种更好？",
+      "relevant_kp_ids": [
+        "kp-dp",
+        "kp-recursion"
+      ],
+      "expected_answer_points": [
+        "DP自底向上迭代",
+        "记忆化搜索自顶向下递归",
+        "DP省去递归开销",
+        "记忆化只计算需要的状态"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "字符串匹配中为什么不直接用哈希值比较？有哈希碰撞怎么办？",
+      "relevant_kp_ids": [
+        "kp-string",
+        "kp-hash",
+        "kp-search-kmp"
+      ],
+      "expected_answer_points": [
+        "哈希碰撞导致假匹配",
+        "需实际字符串二次验证",
+        "用滚动哈希O(n)预处理",
+        "Rabin-Karp算法解决"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "各种排序算法的空间复杂度对比，哪些是原地排序？",
+      "relevant_kp_ids": [
+        "kp-sort",
+        "kp-complexity"
+      ],
+      "expected_answer_points": [
+        "原地排序：冒泡选择插入堆排",
+        "非原地：归并O(n)、计数O(k)",
+        "快排是原地但递归栈O(log n)",
+        "空间占用影响选择"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "队列在BFS中的作用是什么？为什么DFS不能用队列？",
+      "relevant_kp_ids": [
+        "kp-queue",
+        "kp-graph",
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "BFS逐层扩展用队列FIFO",
+        "先进先出保证按层处理",
+        "DFS需要后进先出用栈",
+        "DFS用队列无法回溯"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "什么是斐波那契堆？它和普通二叉堆有什么不同？",
+      "relevant_kp_ids": [
+        "kp-heap"
+      ],
+      "expected_answer_points": [
+        "斐波那契堆是多个堆树",
+        "合并操作O(1)",
+        "删除最小O(log n)均摊",
+        "实现比二叉堆复杂"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "算法的时间复杂度分析中，log的底数重要吗？为什么通常省略？",
+      "relevant_kp_ids": [
+        "kp-complexity"
+      ],
+      "expected_answer_points": [
+        "log底数不同差常数因子",
+        "大O忽略常数",
+        "换底公式log_a n = log_b n / log_b a",
+        "所以省略底数"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "用二分查找解决寻找峰值元素问题，思路是什么？",
+      "relevant_kp_ids": [
+        "kp-search-binary"
+      ],
+      "expected_answer_points": [
+        "比较mid和mid+1",
+        "上坡方向一定有峰值",
+        "二分缩小搜索范围",
+        "时间O(log n)"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "如何求一个数的平方根？可以用二分查找吗？",
+      "relevant_kp_ids": [
+        "kp-search-binary"
+      ],
+      "expected_answer_points": [
+        "二分查找平方根近似值",
+        "精度控制",
+        "牛顿迭代法更高效",
+        "范围在0到x之间"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "拓扑排序的入度表（Kahn算法）和DFS方法有什么区别？",
+      "relevant_kp_ids": [
+        "kp-graph",
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "Kahn算法用队列统计入度",
+        "DFS用后序递归",
+        "Kahn直观",
+        "DFS隐含栈使用"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "数组中的重复数字如何找出？要求空间O(1)怎么做？",
+      "relevant_kp_ids": [
+        "kp-array"
+      ],
+      "expected_answer_points": [
+        "排序后找相邻重复",
+        "原地哈希将值放到对应下标",
+        "负数标记法",
+        "时间O(n)空间O(1)"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "并查集在连通分量问题中的应用，它的优化方法有哪些？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "路径压缩",
+        "按秩合并",
+        "同时使用接近O(α(n))",
+        "Kruskal算法中判环"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "递归函数的时间复杂度分析方法中，递归树法怎么用？",
+      "relevant_kp_ids": [
+        "kp-recursion",
+        "kp-complexity"
+      ],
+      "expected_answer_points": [
+        "画出递归树",
+        "每层节点时间相加",
+        "统计总节点数",
+        "主定理可验证"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "基数排序的原理是什么？和比较排序有什么不同？",
+      "relevant_kp_ids": [
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "按位依次排序",
+        "从低位到高位或反之",
+        "不基于比较",
+        "时间O(d*(n+k))"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "二叉树的直径（任意两节点最长路径）怎么求？",
+      "relevant_kp_ids": [
+        "kp-tree"
+      ],
+      "expected_answer_points": [
+        "DFS求每个节点左右子树深度和",
+        "取最大值",
+        "直径不一定经过根",
+        "时间O(n)"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "栈的入栈顺序和出栈顺序之间的关系，出栈序列的合法性如何判断？",
+      "relevant_kp_ids": [
+        "kp-stack"
+      ],
+      "expected_answer_points": [
+        "模拟入栈出栈过程",
+        "贪心匹配",
+        "某个元素出栈后比它小的必须逆序",
+        "O(n)时间判断"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "字符串的最长公共前缀怎么求？用哪种数据结构最优？",
+      "relevant_kp_ids": [
+        "kp-string"
+      ],
+      "expected_answer_points": [
+        "水平扫描法",
+        "垂直扫描法",
+        "用Trie树最优",
+        "Trie查找公共路径O(S)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "堆中的父子节点关系如何用数组下标表示？",
+      "relevant_kp_ids": [
+        "kp-heap",
+        "kp-array"
+      ],
+      "expected_answer_points": [
+        "下标i的左孩子2i+1",
+        "右孩子2i+2",
+        "父节点(i-1)/2",
+        "基于完全二叉树"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "归并排序中合并两个有序数组的代码需要注意什么？",
+      "relevant_kp_ids": [
+        "kp-sort-merge",
+        "kp-array"
+      ],
+      "expected_answer_points": [
+        "双指针比较",
+        "处理越界",
+        "剩余元素追加",
+        "注意边界条件"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "图的最小生成树算法中，为什么Prim算法更适用于稠密图？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "Prim复杂度O(V²)或O(E log V)",
+        "稠密图E≈V²",
+        "邻接矩阵Prim O(V²)合适",
+        "Kruskal O(E log E)稠密图慢"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "用递归求解斐波那契数列为什么慢？如何优化？",
+      "relevant_kp_ids": [
+        "kp-recursion",
+        "kp-dp"
+      ],
+      "expected_answer_points": [
+        "重复计算太多",
+        "时间O(2^n)",
+        "记忆化O(n)",
+        "DP或矩阵快速幂优化"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "二分查找的边界处理中，mid取左中位和右中位有什么区别？",
+      "relevant_kp_ids": [
+        "kp-search-binary"
+      ],
+      "expected_answer_points": [
+        "(left+right)//2是左中位",
+        "加1后取整是右中位",
+        "死循环时用右中位",
+        "取决于收缩方向"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "单链表的删除操作为什么需要知道前驱节点？",
+      "relevant_kp_ids": [
+        "kp-linkedlist"
+      ],
+      "expected_answer_points": [
+        "单向链表只有后继指针",
+        "无法直接获取前驱",
+        "需要遍历找到前驱",
+        "双链表不需要"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "堆排序为什么通常被认为比快速排序慢，尽管它们的时间复杂度相同？",
+      "relevant_kp_ids": [
+        "kp-heap",
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "堆排序缓存不友好",
+        "堆排序比较次数多",
+        "快排局部性好",
+        "实际常数因子不同"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "如何高效的找出两个数组的交集？有哪些方法？",
+      "relevant_kp_ids": [
+        "kp-array",
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "用哈希集合",
+        "排序后双指针",
+        "哈希集合时间O(n+m)",
+        "双指针空间O(1)"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "图的遍历中，如何记录访问过的节点以避免重复访问？",
+      "relevant_kp_ids": [
+        "kp-graph"
+      ],
+      "expected_answer_points": [
+        "布尔数组标记visited",
+        "顶点编号作下标",
+        "遍历前检查",
+        "递归或迭代中都需标记"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "字符串的KMP算法中，匹配成功一个模式后如何继续寻找下一个匹配？",
+      "relevant_kp_ids": [
+        "kp-search-kmp"
+      ],
+      "expected_answer_points": [
+        "匹配成功后用next跳转",
+        "相当于匹配失败处理",
+        "主串指针不回溯",
+        "可找到所有匹配位置"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "排序算法的并行实现有哪些挑战？",
+      "relevant_kp_ids": [
+        "kp-sort"
+      ],
+      "expected_answer_points": [
+        "数据划分负载均衡",
+        "合并开销",
+        "线程同步",
+        "通信开销"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "学习数据结构和算法有什么好的学习方法？很多概念学了就忘。",
+      "relevant_kp_ids": [
+        "kp-intro"
+      ],
+      "expected_answer_points": [
+        "动手实现每个数据结构",
+        "刷题巩固",
+        "画图理解过程",
+        "多总结对比不同算法"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "什么是跳表？它和平衡树相比有什么优劣？",
+      "relevant_kp_ids": [
+        "kp-linkedlist",
+        "kp-tree",
+        "kp-search"
+      ],
+      "expected_answer_points": [
+        "多级索引加速查找",
+        "查找O(log n)",
+        "实现比平衡树简单",
+        "Redis有序集合用跳表"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "数组、链表、哈希表这三种基本数据结构分别适用于什么场景？从增删查三个方面对比。",
+      "relevant_kp_ids": [
+        "kp-array",
+        "kp-linkedlist",
+        "kp-hash"
+      ],
+      "expected_answer_points": [
+        "数组随机访问快增删慢",
+        "链表增删快不支持随机访问",
+        "哈希表增删查都快但无序",
+        "根据业务需求选择"
+      ],
+      "difficulty": "basic"
+    }
+  ]
+}

@@ -42,9 +42,130 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install flake8
-      - run: |
+      - run: pip install flake8 bandit
+      - name: Lint Python services
+        run: |
           for service in services/backend-core services/profile-service services/sandbox-service; do
             echo "Linting $service..."
-            flake8 "$service/src" --max-line-length=100 --extend-ignore=E203,W503 || true
+            flake8 "$service/src" --max-line-length=100 --extend-ignore=E203,W503
+          done
+      - name: SAST with bandit
+        run: |
+          for service in services/backend-core services/profile-service services/sandbox-service; do
+            echo "Scanning $service with bandit..."
+            bandit -r "$service/src" -ll -q || echo "Warning: bandit found issues in $service"
+          done
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scanning with gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend-core dependencies
+        run: |
+          pip install -r services/backend-core/requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+      - name: Run backend-core tests with coverage
+        run: |
+          cd services/backend-core
+          python -m pytest tests/ -v --cov=src --cov-report=term --cov-fail-under=40
+        # Coverage threshold raised from 10% to 40% after adding 575+ tests
+        # across all backend modules (Guardian/Harness/Memory/Tools/KG/
+        # LearningPath/RAG/LLM/Orchestrator/API).
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5-community
+        env:
+          NEO4J_AUTH: none
+      chromadb:
+        image: chromadb/chroma:1.5.9
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: edumap
+          POSTGRES_PASSWORD: edumap_dev
+          POSTGRES_DB: edumap
+      redis:
+        image: redis:7-alpine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          pip install -r services/backend-core/requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+      - name: Seed Neo4j test data
+        run: |
+          cd services/backend-core
+          python -c "
+          from src.kg.connection import Neo4jPool
+          from src.kg.seed_loader import SeedLoader
+          import asyncio
+          async def seed():
+              pool = Neo4jPool('bolt://localhost:7687', '', '')
+              loader = SeedLoader(pool)
+              result = await loader.load_seed_data()
+              print(f'Seeded: {result}')
+              await pool.close()
+          asyncio.run(seed())
+          "
+      - name: Run integration tests
+        run: |
+          cd services/backend-core
+          python -m pytest tests/test_api/ -v --cov=src --cov-report=term --cov-fail-under=40
+        env:
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USER: ""
+          NEO4J_PASSWORD: ""
+          CHROMA_HOST: localhost
+          CHROMA_PORT: "8000"
+          DATABASE_URL: postgresql://edumap:edumap_dev@localhost:5432/edumap
+          REDIS_URL: redis://localhost:6379/0
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run frontend tests
+        run: pnpm --filter web test:run
+
+  dependency-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan Python dependencies
+        run: |
+          pip install pip-audit
+          for req in services/backend-core/requirements.txt services/profile-service/requirements.txt services/sandbox-service/requirements.txt; do
+            echo "Scanning $req..."
+            pip-audit -r "$req" || echo "Warning: pip-audit found vulnerabilities in $req"
           done

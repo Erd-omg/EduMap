@@ -1,13 +1,29 @@
 'use client';
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { SkillTreeCanvas, KpMastery } from '@/components/knowledge-graph/skill-tree-canvas';
 import { ProgressSlider } from '@/components/knowledge-graph/progress-slider';
 import { ProgressPanel } from '@/components/knowledge-graph/progress-panel';
+import { ResourceViewer } from '@/components/resources/resource-viewer';
+import { QuizViewer, type QuizQuestionData } from '@/components/quiz/quiz-viewer';
+import { QuizResult } from '@/components/quiz/quiz-result';
+import { DemoConsole } from '@/components/knowledge-graph/demo-console';
+import { getUserId } from '@/lib/user-id';
 import { useLearningPathStore } from '@/stores/learning-path-store';
-import { useProfileStore } from '@/stores/profile-store';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+
+interface ResourceItem {
+  id: string;
+  name: string;
+  type: string;
+  content?: string;
+  kp_id?: string;
+  kp_name?: string;
+  description?: string;
+}
 
 export default function CoursePage() {
   const params = useParams();
@@ -22,48 +38,171 @@ export default function CoursePage() {
     recordProgress,
   } = useLearningPathStore();
 
-  const profile = useProfileStore((s) => s.profile);
+  // Resource viewer state
+  const [selectedKpId, setSelectedKpId] = useState<string | null>(null);
+  const [selectedKpName, setSelectedKpName] = useState<string>('');
+  const [selectedKpDescription, setSelectedKpDescription] = useState<string>('');
+  const [selectedKpDifficulty, setSelectedKpDifficulty] = useState<number>(3);
+  const [selectedResources, setSelectedResources] = useState<ResourceItem[]>([]);
+  const [resourcesLoading, setResourcesLoading] = useState(false);
 
-  // Fetch learning path on mount
+  // Quiz state
+  const [showQuiz, setShowQuiz] = useState(false);
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestionData[]>([]);
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, string> | null>(null);
+  const [quizScore, setQuizScore] = useState<number>(0);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [quizError, setQuizError] = useState<string | null>(null);
+
+  // Demo mode state
+  const [demoMode, setDemoMode] = useState(false);
+  const [demoMastered, setDemoMastered] = useState(0);
+  const [demoLearning, setDemoLearning] = useState(0);
+  const [demoNotStarted, setDemoNotStarted] = useState(0);
+
+  // Fetch learning path on mount; invalidate stale cache (>5min)
   useEffect(() => {
     if (courseId) {
-      fetchPath(courseId, 'anonymous');
+      const state = useLearningPathStore.getState();
+      const age = state.lastFetched ? Date.now() - state.lastFetched : Infinity;
+      if (age > 300000 || !state.path?.nodes.length) {
+        fetchPath(courseId, getUserId());
+      }
     }
   }, [courseId, fetchPath]);
 
   // Build mastery map from path nodes
   const mastery: Record<string, KpMastery> = {};
+  const progress: Record<string, number> = {};
   let masteredCount = 0;
   let learningCount = 0;
   let notStartedCount = 0;
 
   if (path?.nodes) {
     for (const node of path.nodes) {
-      switch (node.status) {
+      const nodeStatus = node.status === 'completed' && demoMode ? 'in_progress' as const : node.status;
+      switch (nodeStatus) {
         case 'completed':
           mastery[node.kp_id] = 'mastered';
+          progress[node.kp_id] = 100;
           masteredCount++;
           break;
         case 'in_progress':
           mastery[node.kp_id] = 'learning';
+          progress[node.kp_id] = 50;
           learningCount++;
           break;
         case 'ready':
           mastery[node.kp_id] = 'not_started';
+          progress[node.kp_id] = 0;
           notStartedCount++;
           break;
         case 'locked':
           mastery[node.kp_id] = 'locked';
+          progress[node.kp_id] = 0;
           notStartedCount++;
           break;
       }
     }
   }
 
-  // Handle node click — mark as in_progress or show details
+  // Override counts in demo mode
+  const displayMastered = demoMode ? demoMastered : masteredCount;
+  const displayLearning = demoMode ? demoLearning : learningCount;
+  const displayNotStarted = demoMode ? demoNotStarted : notStartedCount;
+
+  // Fetch resources for a selected knowledge point
+  const fetchResources = useCallback(async (kpId: string, kpName: string) => {
+    setResourcesLoading(true);
+    setSelectedKpId(kpId);
+    setSelectedKpName(kpName);
+    // Reset quiz when selecting a different node
+    setShowQuiz(false);
+    setQuizQuestions([]);
+    setQuizAnswers(null);
+    try {
+      // Fetch generated/system resources for this KP
+      const res = await fetch(`${API_BASE}/api/v1/resources?kp_id=${kpId}&limit=20`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedResources(data.resources || []);
+      } else {
+        setSelectedResources([]);
+      }
+    } catch {
+      setSelectedResources([]);
+    } finally {
+      setResourcesLoading(false);
+    }
+  }, []);
+
+  // Generate quiz questions for current KP
+  const handleStartQuiz = useCallback(async () => {
+    if (!selectedKpId) return;
+    setQuizLoading(true);
+    setQuizError(null);
+    setShowQuiz(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/learning-path/quiz/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kp_id: selectedKpId,
+          kp_name: selectedKpName,
+          kp_description: selectedKpDescription,
+          difficulty: selectedKpDifficulty,
+        }),
+      });
+      if (!res.ok) throw new Error(`Quiz generation failed: ${res.statusText}`);
+      const data = await res.json();
+      setQuizQuestions(data.questions || []);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '生成测验失败';
+      setQuizError(msg);
+      setQuizQuestions([]);
+    } finally {
+      setQuizLoading(false);
+    }
+  }, [selectedKpId, selectedKpName, selectedKpDescription, selectedKpDifficulty]);
+
+  // Handle quiz submit
+  const handleQuizSubmit = useCallback((answers: Record<string, string>, score: number) => {
+    setQuizAnswers(answers);
+    setQuizScore(score);
+    // Record progress with quiz score
+    if (selectedKpId) {
+      recordProgress(selectedKpId, 'completed', score);
+      // Also record to forgetting curve via learning path review endpoint
+      fetch(`${API_BASE}/api/v1/learning-path/forgetting/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: getUserId(), kp_id: selectedKpId }),
+      }).catch(() => {});
+    }
+  }, [selectedKpId, recordProgress]);
+
+  // Handle continuing after quiz
+  const handleQuizContinue = useCallback(() => {
+    setShowQuiz(false);
+    setQuizQuestions([]);
+    setQuizAnswers(null);
+  }, []);
+
+  // Handle node click — zoom/focus graph + show resources (no progress recording)
   const handleNodeClick = useCallback((kpId: string) => {
     const node = path?.nodes.find((n) => n.kp_id === kpId);
-    if (node && (node.status === 'ready' || node.status === 'in_progress')) {
+    if (!node) return;
+    // Show resources for this KP without recording progress
+    fetchResources(kpId, node.name);
+    setSelectedKpDescription(node.description);
+    setSelectedKpDifficulty(node.difficulty);
+  }, [path, fetchResources]);
+
+  // Explicit "start learning" action — marks KP as in_progress
+  const handleStartLearning = useCallback((kpId: string) => {
+    const node = path?.nodes.find((n) => n.kp_id === kpId);
+    if (!node) return;
+    if (node.status === 'ready' || node.status === 'in_progress') {
       recordProgress(kpId, 'in_progress');
     }
   }, [path, recordProgress]);
@@ -87,35 +226,63 @@ export default function CoursePage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">{courseId}</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <h1 className="text-2xl font-bold text-text-primary">{courseId}</h1>
+          <p className="text-sm text-text-secondary mt-1">
             {path ? `${path.total_count} 个知识点 · ${masteredCount} 已掌握` : ''}
           </p>
         </div>
         <div className="flex gap-3">
           <Link
             href={`/generate?courseId=${courseId}`}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-hover transition-colors"
           >
             生成资源
           </Link>
           <Link
             href="/chat"
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-secondary hover:bg-bg-secondary transition-colors"
           >
             对话画像
           </Link>
         </div>
       </div>
 
-      {/* Progress bar */}
+      {/* Progress bar + Demo controls */}
       <div className="mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs text-text-light">
+            {demoMode ? '🎮 演示模式' : `${path?.total_count ?? 0} 个知识点`}
+          </span>
+          <button
+            onClick={() => setDemoMode((v) => !v)}
+            className={`rounded px-2 py-0.5 text-xs transition-colors ${
+              demoMode
+                ? 'bg-brand text-white'
+                : 'border border-border text-text-secondary hover:bg-bg-secondary'
+            }`}
+          >
+            {demoMode ? '退出演示' : '🎮 演示'}
+          </button>
+        </div>
         <ProgressSlider
-          masteredCount={masteredCount}
-          learningCount={learningCount}
-          notStartedCount={notStartedCount}
+          masteredCount={displayMastered}
+          learningCount={displayLearning}
+          notStartedCount={displayNotStarted}
           totalCount={path?.total_count ?? 0}
         />
+        {demoMode && (
+          <DemoConsole
+            initialMastered={masteredCount}
+            initialLearning={learningCount}
+            initialNotStarted={notStartedCount}
+            totalCount={path?.total_count ?? 0}
+            onProgressUpdate={(m, l, ns) => {
+              setDemoMastered(m);
+              setDemoLearning(l);
+              setDemoNotStarted(ns);
+            }}
+          />
+        )}
       </div>
 
       {/* Main content */}
@@ -140,6 +307,7 @@ export default function CoursePage() {
                 mastery={mastery}
                 recommendedKpId={recommendation?.next_kp_id}
                 onNodeClick={handleNodeClick}
+                progress={progress}
               />
             </div>
           </div>
@@ -164,40 +332,81 @@ export default function CoursePage() {
               />
             </div>
 
-            {/* Resource viewer placeholder */}
-            <div className="rounded-xl border bg-white p-4">
-              <h3 className="mb-2 text-sm font-medium text-gray-700">学习资源</h3>
-              <p className="text-center text-xs text-gray-400 py-4">
-                点击技能树节点查看资源
-              </p>
-            </div>
-
-            {/* Personalization banner */}
-            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
-              <details open>
-                <summary className="cursor-pointer text-sm font-medium text-blue-700">
-                  个性化适配说明
-                </summary>
-                <div className="mt-2 space-y-1 text-xs text-blue-600">
-                  {recommendation ? (
-                    <>
-                      <p>推荐学习：{recommendation.next_kp_name}</p>
-                      <p>理由：{recommendation.reason || '根据您的学习进度'}</p>
-                      {recommendation.estimated_session_min && (
-                        <p>建议时长：约 {recommendation.estimated_session_min} 分钟</p>
-                      )}
-                    </>
-                  ) : (
-                    <p>正在分析您的学习路径...</p>
-                  )}
-                  {profile && (
-                    <p className="mt-2 pt-2 border-t border-blue-200">
-                      学习画像已就绪，系统将根据您的进度动态调整
-                    </p>
+            {/* Quiz panel */}
+            {showQuiz ? (
+              quizAnswers !== null ? (
+                <QuizResult
+                  questions={quizQuestions}
+                  answers={quizAnswers}
+                  score={quizScore}
+                  kpName={selectedKpName}
+                  onContinue={handleQuizContinue}
+                  onRetry={() => {
+                    setQuizAnswers(null);
+                    setQuizQuestions([]);
+                    handleStartQuiz();
+                  }}
+                />
+              ) : (
+                <div className="space-y-3">
+                  <QuizViewer
+                    questions={quizQuestions}
+                    kpName={selectedKpName}
+                    onSubmit={handleQuizSubmit}
+                    onSkip={() => {
+                      // Skip quiz — still mark as completed
+                      if (selectedKpId) {
+                        recordProgress(selectedKpId, 'completed');
+                      }
+                      setShowQuiz(false);
+                    }}
+                    isLoading={quizLoading}
+                  />
+                  {quizError && (
+                    <p className="text-xs text-red-500 text-center">{quizError}</p>
                   )}
                 </div>
-              </details>
-            </div>
+              )
+            ) : (
+              /* Resource viewer */
+              <ResourceViewer
+                kpId={selectedKpId ?? undefined}
+                kpName={selectedKpName}
+                resources={selectedResources.length > 0 ? selectedResources as any : undefined}
+                isLoading={resourcesLoading}
+                content={selectedResources.find(r => r.description)?.description}
+                onClose={selectedKpId ? () => setSelectedKpId(null) : undefined}
+              />
+            )}
+
+            {/* Start learning button (when node is ready but not yet started) */}
+            {selectedKpId && !showQuiz && (() => {
+              const node = path?.nodes.find(n => n.kp_id === selectedKpId);
+              if (node && (node.status === 'ready' || node.status === 'locked')) {
+                return (
+                  <button
+                    onClick={() => handleStartLearning(selectedKpId)}
+                    className="w-full rounded-lg border border-brand/30 bg-brand/5 px-4 py-2.5 text-sm font-medium text-brand
+                               hover:bg-brand/10 transition-colors"
+                  >
+                    {node.status === 'locked' ? '🔒 前置知识未完成' : '🎯 开始学习这个知识点'}
+                  </button>
+                );
+              }
+              return null;
+            })()}
+
+            {/* Quiz trigger button */}
+            {selectedKpId && !showQuiz && (
+              <button
+                onClick={handleStartQuiz}
+                className="w-full rounded-lg border border-brand/30 bg-brand/5 px-4 py-2.5 text-sm font-medium text-brand
+                           hover:bg-brand/10 transition-colors"
+              >
+                📝 完成学习并测验
+              </button>
+            )}
+
           </div>
         </div>
       )}

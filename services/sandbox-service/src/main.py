@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 import logging
 import os
+import uuid
 
 import docker
 from docker.errors import DockerException, ImageNotFound
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from src.config import settings
+from src.auth import verify_api_key
+from src.config import settings, _IP_REQUEST_COUNTS, _CONCURRENT_SEMAPHORE
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +24,12 @@ app = FastAPI(
     title="EduMap Sandbox Service",
     version="0.1.0",
     description="Secure code execution sandbox with Docker isolation",
+    dependencies=[Depends(verify_api_key)] if settings.api_key else [],
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -74,6 +78,52 @@ _COMMAND_MAP: dict[str, list[str]] = {
     "ts": ["deno", "eval"],
 }
 
+# ── Rate limiter (per-IP, in-memory) ──────────────────────────────────
+
+
+async def _check_rate_limit(request: Request) -> None:
+    """Enforce per-IP rate limit for sandbox executions."""
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    window = 60.0  # 1-minute window
+
+    count, window_start = _IP_REQUEST_COUNTS.get(client_ip, (0, now))
+    if now - window_start > window:
+        # Reset window
+        _IP_REQUEST_COUNTS[client_ip] = (1, now)
+        return
+
+    _IP_REQUEST_COUNTS[client_ip] = (count + 1, window_start)
+    if count >= settings.rate_limit_per_minute:
+        logger.warning("Rate limit exceeded for IP %s (%d/min)", client_ip, count + 1)
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded: max {settings.rate_limit_per_minute} requests/min per IP")
+
+
+# ── Concurrency semaphore ──────────────────────────────────────────────
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _CONCURRENT_SEMAPHORE
+    if _CONCURRENT_SEMAPHORE is None:
+        _CONCURRENT_SEMAPHORE = asyncio.Semaphore(settings.max_concurrent_executions)
+    return _CONCURRENT_SEMAPHORE
+
+
+# ── Container security helpers ─────────────────────────────────────────
+
+
+def _build_security_kwargs() -> dict:
+    """Build Docker container creation kwargs for sandbox security hardening."""
+    return {
+        "cap_drop": ["ALL"],
+        "security_opt": ["no-new-privileges:true"],
+        "cpu_period": 100000,
+        "cpu_quota": 50000,  # 0.5 CPU core
+        "pids_limit": 50,  # Prevent fork bombs
+        "user": "nobody",  # Run as non-root inside container
+    }
+
+
 # ── Docker client (lazy) ──────────────────────────────────────────────
 
 _docker_client: docker.DockerClient | None = None
@@ -101,7 +151,9 @@ async def health():
 
 
 @app.post("/execute", response_model=CodeExecutionResponse)
-async def execute_code(request: CodeExecutionRequest) -> CodeExecutionResponse:
+async def execute_code(request: CodeExecutionRequest, req: Request) -> CodeExecutionResponse:
+    # Enforce per-IP rate limit
+    await _check_rate_limit(req)
     """Execute user code in an isolated Docker container and return the result."""
     client = get_docker()
     if client is None:
@@ -114,7 +166,11 @@ async def execute_code(request: CodeExecutionRequest) -> CodeExecutionResponse:
 
     image = _IMAGE_MAP.get(request.language, "python:3.12-alpine")
     cmd_prefix = _COMMAND_MAP.get(request.language, ["python", "-c"])
-    container_name = f"edumap-sandbox-{hashlib.md5(request.code.encode()).hexdigest()[:12]}"
+
+    # Unique container name — use hash for dedup + uuid to avoid collisions
+    code_hash = hashlib.md5(request.code.encode()).hexdigest()[:8]
+    unique_suffix = uuid.uuid4().hex[:6]
+    container_name = f"edumap-sandbox-{code_hash}-{unique_suffix}"
 
     # Build full command: prefix + [code]
     full_cmd = cmd_prefix + [request.code]
@@ -127,17 +183,21 @@ async def execute_code(request: CodeExecutionRequest) -> CodeExecutionResponse:
             logger.info("Pulling image %s ...", image)
             client.images.pull(image)
 
-        # Create and start container
-        start = time.monotonic()
-        container = client.containers.create(
-            image,
-            full_cmd,
-            name=container_name,
-            mem_limit=f"{request.memory_limit_mb}m",
-            network_disabled=not settings.network_enabled,
-            read_only=True,
-            auto_remove=False,
-        )
+        # Acquire concurrency slot
+        sem = _get_semaphore()
+        async with sem:  # type: ignore[arg-type]
+            start = time.monotonic()
+            sec_kwargs = _build_security_kwargs()
+            container = client.containers.create(
+                image,
+                full_cmd,
+                name=container_name,
+                mem_limit=f"{request.memory_limit_mb}m",
+                network_disabled=not settings.network_enabled,
+                read_only=True,
+                auto_remove=False,
+                **sec_kwargs,
+            )
         container.start()
 
         # Wait with timeout
@@ -170,18 +230,13 @@ async def execute_code(request: CodeExecutionRequest) -> CodeExecutionResponse:
             execution_time_ms=elapsed,
         )
 
-    except requests.ReadTimeoutError if os.name != "nt" else Exception as exc:  # noqa: F821
-        # Timeout
-        try:
-            container = client.containers.get(container_name)
-            container.remove(force=True)
-        except Exception:
-            pass
+    except docker.errors.APIError as exc:
+        # Container-level errors (timeout, OOM, etc.)
         elapsed = int((time.monotonic() - start) * 1000) if 'start' in dir() else 0
         return CodeExecutionResponse(
-            status="timeout",
+            status="timeout" if "timeout" in str(exc).lower() else "error",
             stdout="",
-            stderr=f"Execution timed out after {request.timeout_seconds}s",
+            stderr=f"Sandbox execution error: {exc}",
             exit_code=-1,
             execution_time_ms=elapsed,
         )
