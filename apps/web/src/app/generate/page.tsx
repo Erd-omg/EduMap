@@ -152,7 +152,10 @@ export default function GeneratePage() {
   }, [updateSessionId]);
 
   const handleGenerationError = useCallback((_error: string) => {
-    // Error is shown inside GenerationProgress; keep sessionId for user to see
+    // Error is shown inside GenerationProgress; keep sessionId for user to see.
+    // Even on failure/timeout the orchestrator may have synced partial
+    // resources — refresh the library so they are not silently hidden.
+    setResourceRefreshKey((k) => k + 1);
     setTimeout(() => {
       updateSessionId(null);
     }, 8000);

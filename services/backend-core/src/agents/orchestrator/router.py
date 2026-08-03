@@ -256,6 +256,25 @@ async def _run_generation(session_id: str, request: Request) -> None:
                                 "phase": phase_labels[node_name],
                             },
                         })
+                # Persist live progress so GET /status can restore completed
+                # agents after a page refresh (the full final state is only
+                # written once at the end of the run).
+                if short_term:
+                    try:
+                        await short_term.update_metadata(session_id, {
+                            "orchestrator_state": {
+                                "current_phase": state.get("current_phase", ""),
+                                "overall_status": "running",
+                                "agent_results": {
+                                    n: {"status": "completed"}
+                                    for n in state.get("agent_results", {})
+                                },
+                            },
+                        })
+                    except Exception:
+                        # Best-effort; a failed progress write must not kill
+                        # the generation.
+                        pass
             return last
 
         try:
