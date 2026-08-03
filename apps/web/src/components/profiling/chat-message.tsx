@@ -268,7 +268,7 @@ function AiTextMessage({
             <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-brand rounded-sm" />
           )}
         </div>
-        <p className="mt-1 text-right text-[10px] text-text-light flex items-center justify-end gap-2">
+        <div className="mt-1 text-right text-[10px] text-text-light flex items-center justify-end gap-2">
           {message.sources && message.sources.length > 0 ? (
             <SourcePopover sources={message.sources} />
           ) : message.type === 'ai_text' && !isStreaming ? (
@@ -283,7 +283,7 @@ function AiTextMessage({
             </span>
           ) : null}
           {isStreaming ? 'AI 生成中...' : formatTime(message.timestamp)}
-        </p>
+        </div>
       </div>
     </div>
   );
