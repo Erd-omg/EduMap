@@ -260,15 +260,16 @@ async def _run_generation(session_id: str, request: Request) -> None:
 
         try:
             try:
-                final_state = await asyncio.wait_for(_graph_runner(), timeout=300)
+                # Real 6-agent generation with LLM can take 5+ minutes
+                final_state = await asyncio.wait_for(_graph_runner(), timeout=600)
             except AttributeError:
                 # Fallback: astream() not available in this LangGraph version
                 final_state = await graph.ainvoke(state)
         except TimeoutError:
-            logger.error("Generation %s timed out after 300s — failing session", session_id)
+            logger.error("Generation %s timed out after 600s — failing session", session_id)
             state["overall_status"] = "failed"
             state["errors"] = state.get("errors", []) + [
-                {"agent": "orchestrator", "error": "Generation timed out after 300s", "phase": "UNKNOWN"}
+                {"agent": "orchestrator", "error": "Generation timed out after 600s", "phase": "UNKNOWN"}
             ]
 
         # Use the fully-accumulated state, not the last streamed step — the
@@ -292,7 +293,9 @@ async def _run_generation(session_id: str, request: Request) -> None:
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     sync_payload = [
                         {
-                            "id": r.get("id", f"gen-{session_id}-{i}"),
+                            # GeneratedResource has no stable id and the
+                            # resources.id column is a UUID — always mint one.
+                            "id": str(uuid.uuid4()),
                             "user_id": result.get("user_id", "anonymous"),
                             "name": r.get("title", r.get("type", "resource")),
                             "type": r.get("type", "explanation"),

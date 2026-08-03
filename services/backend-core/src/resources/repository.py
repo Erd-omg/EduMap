@@ -147,6 +147,21 @@ class ResourceRepository:
         count = 0
         async with self._pool.acquire() as conn:
             for r in resources:
+                # asyncpg requires a datetime for TIMESTAMPTZ columns; the model
+                # carries created_at as an ISO string for JSON serialization.
+                created_at = (
+                    datetime.fromisoformat(r.created_at)
+                    if isinstance(r.created_at, str) and r.created_at
+                    else r.created_at
+                )
+                # resources.id is a UUID column — normalize non-UUID ids (e.g.
+                # frontend-passed "gen-..." fallbacks) to a fresh UUID.
+                resource_id = r.id
+                if isinstance(resource_id, str):
+                    try:
+                        UUID(resource_id)
+                    except ValueError:
+                        resource_id = str(uuid.uuid4())
                 await conn.execute(
                     """
                     INSERT INTO resources
@@ -155,7 +170,7 @@ class ResourceRepository:
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                     ON CONFLICT (id) DO NOTHING
                     """,
-                    r.id,
+                    resource_id,
                     r.user_id,
                     r.name,
                     r.type,
@@ -163,7 +178,7 @@ class ResourceRepository:
                     r.kp_id,
                     r.kp_name,
                     r.description,
-                    r.created_at,
+                    created_at,
                     r.parse_status,
                     _serialize_stats(r.parse_stats),
                 )
