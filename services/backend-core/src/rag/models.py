@@ -43,6 +43,9 @@ class MentorSource(BaseModel):
     type: SourceType = "neo4j"
     score: float = 0.0
     summary: str = ""
+    # Optional link back to the original uploaded resource (chroma chunk
+    # sources carry resource_id in their metadata; neo4j/KP sources don't).
+    resource_id: str | None = None
 
 
 class MentorResponse(BaseModel):

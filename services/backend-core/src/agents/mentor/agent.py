@@ -149,6 +149,9 @@ class MentorAgent(BaseAgent, MemoryAwareMixin, ToolInjectionMixin):
                 type=s.source_type,
                 score=s.score,
                 summary=s.content[:200],
+                # Chroma chunk metadata carries resource_id — lets the
+                # frontend open the original uploaded material.
+                resource_id=s.metadata.get("resource_id"),
             )
             for s in context.sources
         ]

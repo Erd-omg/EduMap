@@ -319,6 +319,12 @@ async def _run_generation(session_id: str, request: Request) -> None:
         if generated:
             try:
                 async with httpx.AsyncClient(timeout=10.0) as client:
+                    # Bind every generated resource to the node the user
+                    # selected on /generate.  The planner invents sub-KP ids
+                    # (e.g. "kp-linkedlist-basic") that do not exist in the
+                    # knowledge graph, so the graph panel could never match
+                    # them; the selected node id is a real KG node.
+                    selected_kp_id = result.get("knowledge_point_id")
                     sync_payload = [
                         {
                             # GeneratedResource has no stable id and the
@@ -328,8 +334,12 @@ async def _run_generation(session_id: str, request: Request) -> None:
                             "name": r.get("title", r.get("type", "resource")),
                             "type": r.get("type", "explanation"),
                             "source": "system_generated",
-                            "kp_id": r.get("kp_id"),
+                            "kp_id": selected_kp_id or r.get("kp_id"),
                             "kp_name": r.get("kp_name"),
+                            # Persist the generated markdown body so the
+                            # library / graph can open it (the resources
+                            # table has no separate content column).
+                            "description": (r.get("content") or "")[:20000],
                             "created_at": datetime.now(timezone.utc).isoformat(),
                             "parse_status": "parsed",
                         }

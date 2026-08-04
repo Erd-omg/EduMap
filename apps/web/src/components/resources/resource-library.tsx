@@ -68,13 +68,20 @@ function formatDate(iso: string): string {
 
 /* ── Resource Library Component ───────────────────────────────────── */
 
-export function ResourceLibrary({ refreshKey = 0 }: { refreshKey?: number }) {
+interface ResourceLibraryProps {
+  refreshKey?: number;
+  /** Optional KP to bind newly uploaded files to (from the /generate KP picker). */
+  defaultKpId?: string | null;
+  defaultKpName?: string | null;
+}
+
+export function ResourceLibrary({ refreshKey = 0, defaultKpId, defaultKpName }: ResourceLibraryProps) {
   const [resources, setResources] = useState<ResourceItem[]>([]);
   const [filter, setFilter] = useState<ResourceFilter>('all');
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
-  const [previewResource, setPreviewResource] = useState<{ id: string; name: string; parseStats?: { chunks?: number; indexed?: number } } | null>(null);
+  const [previewResource, setPreviewResource] = useState<ResourceItem | null>(null);
   const [previewChunks, setPreviewChunks] = useState<ChunkPreview[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -113,6 +120,9 @@ export function ResourceLibrary({ refreshKey = 0 }: { refreshKey?: number }) {
     const formData = new FormData();
     formData.append('file', files[0]);
     formData.append('user_id', getUserId());
+    // Bind the upload to the currently selected KP so it shows in the graph.
+    if (defaultKpId) formData.append('kp_id', defaultKpId);
+    if (defaultKpName) formData.append('kp_name', defaultKpName);
 
     try {
       const res = await fetch(`${API_BASE}/api/v1/resources/upload`, {
@@ -133,15 +143,17 @@ export function ResourceLibrary({ refreshKey = 0 }: { refreshKey?: number }) {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [fetchResources]);
+  }, [fetchResources, defaultKpId, defaultKpName]);
 
-  // ── Preview chunk fetch handler ──────────────────────────
-  const handlePreview = useCallback(async (id: string, name: string, parseStats?: { chunks?: number; indexed?: number }) => {
-    setPreviewResource({ id, name, parseStats });
+  // ── Preview content fetch handler ────────────────────────
+  // Shows the persisted description (system-generated resources) plus any
+  // parsed chunks (uploaded files).
+  const handlePreview = useCallback(async (resource: ResourceItem) => {
+    setPreviewResource(resource);
     setPreviewChunks([]);
     setPreviewLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/resources/${id}/chunks?limit=10`);
+      const res = await fetch(`${API_BASE}/api/v1/resources/${resource.id}/chunks?limit=10`);
       if (res.ok) {
         const data = await res.json();
         setPreviewChunks(data.chunks || []);
@@ -242,7 +254,10 @@ export function ResourceLibrary({ refreshKey = 0 }: { refreshKey?: number }) {
         ) : (
           filtered.map((resource) => (
             <Card key={resource.id}>
-              <CardContent className="flex items-center gap-4 p-4">
+              <CardContent
+                className="flex items-center gap-4 p-4 cursor-pointer hover:bg-bg-secondary/50 transition-colors"
+                onClick={() => handlePreview(resource)}
+              >
                 {/* Type icon */}
                 <div
                   className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm ${
@@ -267,7 +282,7 @@ export function ResourceLibrary({ refreshKey = 0 }: { refreshKey?: number }) {
                   </div>
                   <div className="mt-0.5 flex items-center gap-3 text-xs text-text-light">
                     {resource.file_size != null && <span>{formatFileSize(resource.file_size)}</span>}
-                    {resource.kp_name && <span>知识点: {resource.kp_name}</span>}
+                    {(resource.kp_name || resource.kp_id) && <span>知识点: {resource.kp_name || resource.kp_id}</span>}
                     <span>{formatDate(resource.created_at)}</span>
                     {resource.source === 'user_upload' && resource.parse_status && (
                       <span className={`inline-flex items-center gap-1 ${
@@ -286,20 +301,18 @@ export function ResourceLibrary({ refreshKey = 0 }: { refreshKey?: number }) {
                 </div>
 
                 {/* Actions */}
-                {resource.source === 'user_upload' && resource.parse_status === 'parsed' && (
-                  <button
-                    onClick={() => handlePreview(resource.id, resource.name, resource.parse_stats || undefined)}
-                    className="rounded-lg p-2 text-text-light hover:bg-brand/10 hover:text-brand transition-colors"
-                    title="查看解析内容"
-                  >
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                  </button>
-                )}
                 <button
-                  onClick={() => handleDelete(resource.id)}
+                  onClick={(e) => { e.stopPropagation(); handlePreview(resource); }}
+                  className="rounded-lg p-2 text-text-light hover:bg-brand/10 hover:text-brand transition-colors"
+                  title="查看内容"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDelete(resource.id); }}
                   className="rounded-lg p-2 text-text-light hover:bg-danger-bg hover:text-danger transition-colors"
                   title="删除"
                 >
@@ -325,7 +338,7 @@ export function ResourceLibrary({ refreshKey = 0 }: { refreshKey?: number }) {
           >
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-base font-semibold text-text-primary">
-                解析内容预览 — {previewResource.name}
+                资源内容 — {previewResource.name}
               </h3>
               <button
                 onClick={() => { setPreviewResource(null); setPreviewChunks([]); }}
@@ -340,37 +353,53 @@ export function ResourceLibrary({ refreshKey = 0 }: { refreshKey?: number }) {
             {previewLoading ? (
               <div className="flex items-center justify-center py-8 text-sm text-text-light">
                 <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand border-t-transparent mr-2" />
-                加载解析内容...
-              </div>
-            ) : previewChunks.length === 0 ? (
-              <div className="text-center py-8">
-                <p className="text-sm text-text-light mb-1">
-                  {previewResource.parseStats?.chunks && previewResource.parseStats?.indexed === 0
-                    ? `文件已解析 ${previewResource.parseStats.chunks} 个段落，但向量数据库未连接，无法预览具体内容`
-                    : '暂无解析段落数据'}
-                </p>
+                加载内容...
               </div>
             ) : (
-              <div className="space-y-3">
-                <p className="text-xs text-text-secondary">
-                  共 {previewChunks.length} 个文本段落（每段预览前 200 字符）
-                </p>
-                {previewChunks.map((chunk, i) => (
-                  <div key={i} className="rounded-lg border border-border bg-bg-secondary p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium text-text-secondary">
-                        段落 #{i + 1}
-                      </span>
-                      <span className="text-[10px] text-text-light">
-                        {chunk.char_count} 字符
-                      </span>
+              <div className="space-y-4">
+                {/* Generated resources carry their markdown body as description */}
+                {previewResource.description && (
+                  <div>
+                    <p className="text-xs font-medium text-text-secondary mb-1.5">内容</p>
+                    <div className="rounded-lg border border-border bg-bg-secondary p-3 text-xs text-text-primary whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto">
+                      {previewResource.description}
                     </div>
-                    <p className="text-xs text-text-primary whitespace-pre-wrap leading-relaxed">
-                      {chunk.text_preview}
-                      {chunk.char_count > 200 && '...'}
+                  </div>
+                )}
+                {/* Uploaded files expose parsed chunks */}
+                {previewChunks.length > 0 ? (
+                  <div>
+                    <p className="text-xs text-text-secondary mb-1.5">
+                      共 {previewChunks.length} 个文本段落（每段预览前 200 字符）
+                    </p>
+                    <div className="space-y-3">
+                      {previewChunks.map((chunk, i) => (
+                        <div key={i} className="rounded-lg border border-border bg-bg-secondary p-3">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium text-text-secondary">
+                              段落 #{i + 1}
+                            </span>
+                            <span className="text-[10px] text-text-light">
+                              {chunk.char_count} 字符
+                            </span>
+                          </div>
+                          <p className="text-xs text-text-primary whitespace-pre-wrap leading-relaxed">
+                            {chunk.text_preview}
+                            {chunk.char_count > 200 && '...'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : !previewResource.description ? (
+                  <div className="text-center py-8">
+                    <p className="text-sm text-text-light mb-1">
+                      {previewResource.parse_stats?.chunks && previewResource.parse_stats?.indexed === 0
+                        ? `文件已解析 ${previewResource.parse_stats.chunks} 个段落，但向量数据库未连接，无法预览具体内容`
+                        : '暂无内容'}
                     </p>
                   </div>
-                ))}
+                ) : null}
               </div>
             )}
           </div>

@@ -234,14 +234,16 @@ export function ChatWindow() {
                     : '就绪'}
               </span>
             </div>
-            {hasContent && (
-              <button
-                onClick={store.clearMessages}
-                className="text-xs text-text-light hover:text-text-primary transition-colors"
-              >
-                清空对话
-              </button>
-            )}
+            <button
+              onClick={() => {
+                // Start a fresh conversation — old one stays in history.
+                disconnectSSE();
+                store.createSession();
+              }}
+              className="text-xs text-text-light hover:text-text-primary transition-colors"
+            >
+              ✨ 新建对话
+            </button>
           </div>
 
           {/* Messages */}

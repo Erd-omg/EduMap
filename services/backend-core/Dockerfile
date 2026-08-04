@@ -15,6 +15,8 @@ RUN UV_HTTP_TIMEOUT=300 UV_RETRIES=8 uv pip install --system -r requirements.txt
 COPY services/backend-core/src/ src/
 # Seed data for Neo4j demo course — loaded automatically at startup
 COPY scripts/db/seed/ scripts/db/seed/
+# One-off KP backfill utility
+COPY scripts/db/backfill_resource_kp.py scripts/db/backfill_resource_kp.py
 RUN addgroup --system --gid 1001 appgroup && \
     adduser --system --uid 1001 appuser --ingroup appgroup && \
     chown -R appuser:appgroup /app

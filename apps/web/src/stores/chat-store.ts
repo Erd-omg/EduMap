@@ -17,6 +17,8 @@ export interface MentorSource {
   type: 'chroma' | 'neo4j';
   score: number;
   summary: string;
+  /** Resource id for chroma sources — enables opening the original material. */
+  resource_id?: string | null;
 }
 
 export interface Message {

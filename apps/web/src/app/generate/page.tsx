@@ -222,7 +222,11 @@ export default function GeneratePage() {
       )}
 
       {/* Resource library */}
-      <ResourceLibrary refreshKey={resourceRefreshKey} />
+      <ResourceLibrary
+        refreshKey={resourceRefreshKey}
+        defaultKpId={selectedKpId || null}
+        defaultKpName={kpNodes.find((n) => n.id === selectedKpId)?.name || null}
+      />
     </div>
   );
 }

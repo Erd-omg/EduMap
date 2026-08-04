@@ -121,8 +121,9 @@ export default function CoursePage() {
     setQuizQuestions([]);
     setQuizAnswers(null);
     try {
-      // Fetch generated/system resources for this KP
-      const res = await fetch(`${API_BASE}/api/v1/resources?kp_id=${kpId}&limit=20`);
+      // Fetch generated/system resources for this KP — must include user_id
+      // or the backend defaults to "anonymous" and matches nothing.
+      const res = await fetch(`${API_BASE}/api/v1/resources?kp_id=${kpId}&user_id=${getUserId()}&limit=20`);
       if (res.ok) {
         const data = await res.json();
         setSelectedResources(data.resources || []);
