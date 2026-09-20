@@ -106,6 +106,7 @@ services:
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       API_KEY: ${API_KEY:-}
       SANDBOX_URL: http://sandbox-service:8002
+      PROFILE_SERVICE_BASE: http://profile-service:8001
       DATABASE_URL: postgresql+asyncpg://edumap:edumap_dev@postgres:5432/edumap
       # Persist the sentence-transformers model cache across container recreations
       # (huggingface.co may be unreachable from inside the container)

@@ -1,0 +1,95 @@
+{
+  "dataset": "sample",
+  "n_queries": 20,
+  "top_k": 5,
+  "rrf_k": 60,
+  "reranker": false,
+  "expand_query": false,
+  "generated_at": "2026-09-20T15:41:07.625809+00:00",
+  "results": {
+    "score": {
+      "precision": {
+        "1": 0.95,
+        "3": 0.6333,
+        "5": 0.43
+      },
+      "recall": {
+        "1": 0.7667,
+        "3": 1.4333,
+        "5": 1.55
+      },
+      "mrr": 0.95,
+      "ndcg": {
+        "1": 0.95,
+        "3": 0.942,
+        "5": 0.9396
+      },
+      "faithfulness": 0.0,
+      "relevancy": 0.0,
+      "n_queries": 20,
+      "overall": 0.7644,
+      "hit_rate": {
+        "1": 0.95,
+        "3": 0.95,
+        "5": 0.95
+      },
+      "elapsed_seconds": 0.49
+    },
+    "minmax": {
+      "precision": {
+        "1": 0.85,
+        "3": 0.6333,
+        "5": 0.42
+      },
+      "recall": {
+        "1": 0.6917,
+        "3": 1.4333,
+        "5": 1.525
+      },
+      "mrr": 0.9,
+      "ndcg": {
+        "1": 0.85,
+        "3": 0.9153,
+        "5": 0.9162
+      },
+      "faithfulness": 0.0,
+      "relevancy": 0.0,
+      "n_queries": 20,
+      "overall": 0.7318,
+      "hit_rate": {
+        "1": 0.85,
+        "3": 0.95,
+        "5": 0.95
+      },
+      "elapsed_seconds": 0.42
+    },
+    "rrf": {
+      "precision": {
+        "1": 0.85,
+        "3": 0.6333,
+        "5": 0.43
+      },
+      "recall": {
+        "1": 0.6917,
+        "3": 1.4333,
+        "5": 1.55
+      },
+      "mrr": 0.9,
+      "ndcg": {
+        "1": 0.85,
+        "3": 0.9193,
+        "5": 0.9211
+      },
+      "faithfulness": 0.0,
+      "relevancy": 0.0,
+      "n_queries": 20,
+      "overall": 0.7352,
+      "hit_rate": {
+        "1": 0.85,
+        "3": 0.95,
+        "5": 0.95
+      },
+      "elapsed_seconds": 0.35
+    }
+  }
+}

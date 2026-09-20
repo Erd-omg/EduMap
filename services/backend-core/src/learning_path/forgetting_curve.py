@@ -157,12 +157,15 @@ class ForgettingCurveService:
                         user_id, kp_id,
                     )
                     if row:
+                        last_review = row["last_review_time"]
                         state = ForgettingState(
                             kp_id=kp_id,
                             user_id=user_id,
                             alpha=row["alpha"],
                             beta=row["beta"],
-                            last_review_time=row["last_review_time"] if row["last_review_time"] else 0.0,
+                            # 列类型为 TIMESTAMP WITH TIME ZONE，asyncpg 返回 datetime，
+                            # 必须转成 Unix 秒，否则 predict_recall() 会抛 TypeError。
+                            last_review_time=last_review.timestamp() if last_review else 0.0,
                             review_count=row["review_count"],
                             strength=row["strength"],
                         )
@@ -309,6 +312,55 @@ class ForgettingCurveService:
             if uid == user_id:
                 states.append(state.to_dict())
         return states
+
+    async def get_recall_map(self, user_id: str) -> dict[str, float]:
+        """返回 ``{kp_id: recall_probability}``，用于驱动学习路径重算。
+
+        仅包含"真正学习过"（``last_review_time > 0``）的知识点，避免把
+        "从未学习"（``predict_recall() == 0.0``）误判为"已完全遗忘"而
+        错误地触发复习加成。
+
+        优先使用内存缓存；若缓存为空且配置了 DB，则从
+        ``forgetting_curve_state`` 补齐，保证进程重启后闭环依然可用。
+        """
+        keys = [kpid for (uid, kpid) in self._states if uid == user_id]
+
+        if not keys and self._db_pool is not None:
+            try:
+                async with self._db_pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        """
+                        SELECT kp_id, alpha, beta, last_review_time, review_count, strength
+                        FROM forgetting_curve_state
+                        WHERE user_id = $1
+                        """,
+                        user_id,
+                    )
+                for row in rows:
+                    kp_id = row["kp_id"]
+                    last_review = row["last_review_time"]
+                    state = ForgettingState(
+                        kp_id=kp_id,
+                        user_id=user_id,
+                        alpha=row["alpha"],
+                        beta=row["beta"],
+                        last_review_time=last_review.timestamp() if last_review else 0.0,
+                        review_count=row["review_count"],
+                        strength=row["strength"],
+                    )
+                    self._states[(user_id, kp_id)] = state
+                    self._loaded_from_db.add((user_id, kp_id))
+                keys = [kpid for (uid, kpid) in self._states if uid == user_id]
+            except Exception as exc:
+                logger.debug("Failed to load forgetting states for recall map: %s", exc)
+
+        recall_map: dict[str, float] = {}
+        for kp_id in keys:
+            state = self._states.get((user_id, kp_id))
+            if state is None or state.last_review_time <= 0:
+                continue
+            recall_map[kp_id] = state.predict_recall()
+        return recall_map
 
     async def delete_user_data(self, user_id: str) -> int:
         """Delete all forgetting curve states for a user.

@@ -25,7 +25,7 @@ export function ChatWindow() {
   const completedRef = useRef(false);
 
   const store = useChatStore();
-  const { profile, confidenceScores, updateProfile } = useProfileStore();
+  const { profile, confidenceScores, updateProfile, syncToBackend } = useProfileStore();
 
   // Derive active messages from session store
   const messages = store.activeSessionId
@@ -130,6 +130,9 @@ export function ChatWindow() {
           const confidence = data.confidence_scores ?? {};
           if (profileData) {
             updateProfile(profileData as UserProfile, confidence);
+            // 后端分析出新的 6 维画像后立即同步到 profile-service，
+            // 让推荐路由（学习路径/通知）能读到；失败仅 warn 不阻塞 UI
+            void syncToBackend();
           }
         } catch {
           // Ignore parse errors

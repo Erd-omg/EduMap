@@ -104,6 +104,8 @@ async def lifespan(app: FastAPI):
         embedding_model=settings.llm_embedding_model,
         preloaded_model=getattr(app.state, "_embedding_model", None),
     )
+    rag_service.fusion_method = settings.hybrid_fusion_method
+    rag_service.fusion_k = settings.hybrid_rrf_k
     app.state.rag_service = rag_service
     app.state.vector_index = vector_index
 

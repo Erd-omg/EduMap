@@ -12,6 +12,10 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from src.learning_path.forgetting_curve import (
+    ALERT_RECALL_THRESHOLD,
+    URGENT_RECALL_THRESHOLD,
+)
 from src.learning_path.models import (
     ContentType,
     ContentTypeSuggestion,
@@ -28,11 +32,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── Weight constants ──────────────────────────────────────────────────
+# ── Weight constants (归一化，合计 = 1.0) ─────────────────────────────
+#
+# 加入遗忘权重后重新归一化，保证优先级分数仍落在 [0, 1] 区间，
+# 同时让"评估 → 再推荐"闭环真正影响排序。
 
-W_READY = 0.5
-W_DIFFICULTY = 0.3
-W_GAP = 0.2
+W_READY = 0.40        # 可学习（前置已满足）
+W_DIFFICULTY = 0.20   # 难度匹配度
+W_GAP = 0.15          # 知识薄弱点
+W_FORGET = 0.25       # 遗忘紧迫度（艾宾浩斯回忆概率）
 
 # Content type mapping by dominant interaction style
 _STYLE_CONTENT_MAP: dict[str, list[ContentType]] = {
@@ -63,6 +71,8 @@ class PathService:
         self._progress: dict[str, list[ProgressRecord]] = {}
         self._db_pool = db_pool  # Optional asyncpg pool for persistence
         self._progress_loaded: set[str] = set()
+        # path_recommendations 建表只需成功执行一次（见 save_recommendation）
+        self._reco_table_ready: bool = False
 
     async def _load_progress(self, user_id: str) -> None:
         """Load learning progress from PostgreSQL for a user."""
@@ -118,6 +128,87 @@ class PathService:
                 )
         except Exception as exc:
             logger.debug("Failed to save progress to DB: %s", exc)
+
+    _RECO_TABLE_DDL = """
+        CREATE TABLE IF NOT EXISTS path_recommendations (
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id VARCHAR(255) NOT NULL,
+            course_id VARCHAR(255) NOT NULL,
+            kp_id VARCHAR(255) NOT NULL,
+            kp_name VARCHAR(512),
+            reason TEXT,
+            recommended_content_type VARCHAR(50),
+            estimated_session_min INTEGER,
+            source VARCHAR(50) NOT NULL DEFAULT 'path',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    """
+
+    async def save_recommendation(
+        self,
+        user_id: str,
+        course_id: str,
+        rec: PathRecommendation,
+        source: str = "path",
+    ) -> None:
+        """将一次推荐结果落库（失败仅记日志，不影响主流程）。"""
+        if self._db_pool is None:
+            return
+        try:
+            async with self._db_pool.acquire() as conn:
+                if not self._reco_table_ready:
+                    # 建表只需成功一次；失败则保持 False，下次插入时重试
+                    await conn.execute(self._RECO_TABLE_DDL)
+                    self._reco_table_ready = True
+                await conn.execute(
+                    """
+                    INSERT INTO path_recommendations
+                        (user_id, course_id, kp_id, kp_name, reason,
+                         recommended_content_type, estimated_session_min, source)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    """,
+                    user_id,
+                    course_id,
+                    rec.next_kp_id,
+                    rec.next_kp_name,
+                    rec.reason,
+                    str(rec.recommended_content_type),
+                    rec.estimated_session_min,
+                    source,
+                )
+        except Exception as exc:
+            logger.warning("Failed to persist recommendation: %s", exc)
+
+    async def get_recommendation_history(
+        self, user_id: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """查询用户最近的推荐历史（最新在前）。"""
+        if self._db_pool is None:
+            return []
+        try:
+            async with self._db_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT kp_id, kp_name, reason, recommended_content_type,
+                           estimated_session_min, source, created_at
+                    FROM path_recommendations
+                    WHERE user_id = $1
+                    ORDER BY created_at DESC
+                    LIMIT $2
+                    """,
+                    user_id,
+                    limit,
+                )
+            history = []
+            for row in rows:
+                item = dict(row)
+                if item.get("created_at") is not None:
+                    item["created_at"] = item["created_at"].isoformat()
+                history.append(item)
+            return history
+        except Exception as exc:
+            logger.warning("Failed to load recommendation history: %s", exc)
+            return []
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -211,11 +302,30 @@ class PathService:
         user_id: str,
         last_kp_id: str | None = None,
         profile: dict | None = None,
+        forgetting_map: dict[str, float] | None = None,
     ) -> PathRecommendation | None:
-        """Find the next knowledge point the user should study."""
+        """Find the next knowledge point the user should study.
+
+        Args:
+            forgetting_map: 可选的 ``{kp_id: recall_probability}`` 映射。回忆概率
+                低于 ``ALERT_RECALL_THRESHOLD`` 的知识点会获得 ``W_FORGET`` 权重加成，
+                并且即使已标记为 completed 也会重新进入候选集，从而真正闭合
+                "学习 → 评估 → 遗忘预测 → 再推荐"的链路。
+        """
         path = await self.get_personalized_path(course_id, user_id, profile)
         if not path.nodes:
             return None
+
+        forgetting_map = forgetting_map or {}
+        review_set = {
+            kp_id for kp_id, recall in forgetting_map.items()
+            if recall < ALERT_RECALL_THRESHOLD
+        }
+        if review_set:
+            logger.info(
+                "Review set triggered: %d KP(s) below recall<%.1f, W_FORGET=%.2f",
+                len(review_set), ALERT_RECALL_THRESHOLD, W_FORGET,
+            )
 
         # Score each ready node
         ability = self._estimate_ability(profile)
@@ -231,12 +341,14 @@ class PathService:
         best_score = -1.0
 
         for node in path.nodes:
-            if node.status not in ("ready", "in_progress"):
+            is_review = node.kp_id in review_set
+            # 常规候选：可学习/进行中；复习候选：已遗忘的（含已完成）
+            if node.status not in ("ready", "in_progress") and not is_review:
                 continue
             if last_kp_id and node.kp_id == last_kp_id:
                 continue
 
-            score = self._priority_score(node, ability, gap_set)
+            score = self._priority_score(node, ability, gap_set, forgetting_map)
             if score > best_score:
                 best_score = score
                 best_node = node
@@ -253,7 +365,7 @@ class PathService:
         return PathRecommendation(
             next_kp_id=best_node.kp_id,
             next_kp_name=best_node.name,
-            reason=self._recommendation_reason(best_node, ability, gap_set),
+            reason=self._recommendation_reason(best_node, ability, gap_set, forgetting_map),
             recommended_content_type=content_type[0] if content_type else "explanation",
             estimated_session_min=session_min,
         )
@@ -427,6 +539,7 @@ class PathService:
         node: PathNode,
         ability: float,
         gap_set: set[str],
+        forgetting_map: dict[str, float] | None = None,
     ) -> float:
         """Compute a priority score for a candidate node."""
         score = 0.0
@@ -446,12 +559,52 @@ class PathService:
         if node.kp_id in gap_set or node.name in gap_set:
             score += W_GAP * 1.0
 
+        # Forgetting urgency — 回忆概率越低，越应优先复习
+        if forgetting_map:
+            score += W_FORGET * self._forget_factor(
+                self._lookup_recall(node, forgetting_map)
+            )
+
         return score
 
     @staticmethod
-    def _recommendation_reason(node: PathNode, ability: float, gap_set: set[str]) -> str:
+    def _lookup_recall(node: PathNode, forgetting_map: dict[str, float]) -> float | None:
+        """按 kp_id 优先、name 兜底查回忆概率。"""
+        if node.kp_id in forgetting_map:
+            return forgetting_map[node.kp_id]
+        return forgetting_map.get(node.name)
+
+    @staticmethod
+    def _forget_factor(recall: float | None) -> float:
+        """把回忆概率映射为 [0, 1] 的遗忘紧迫度。
+
+        - ``None``（从未学习过）→ 0，不参与复习加成
+        - 低于紧急阈值 → 1.0（最优先复习）
+        - 低于告警阈值 → 0.7（需要复习）
+        - 其余 → 0
+        """
+        if recall is None:
+            return 0.0
+        if recall < URGENT_RECALL_THRESHOLD:
+            return 1.0
+        if recall < ALERT_RECALL_THRESHOLD:
+            return 0.7
+        return 0.0
+
+    @staticmethod
+    def _recommendation_reason(
+        node: PathNode,
+        ability: float,
+        gap_set: set[str],
+        forgetting_map: dict[str, float] | None = None,
+    ) -> str:
         """Generate a human-readable reason for the recommendation."""
         parts = []
+        recall = PathService._lookup_recall(node, forgetting_map) if forgetting_map else None
+        if recall is not None and recall < URGENT_RECALL_THRESHOLD:
+            parts.append(f"该知识点回忆概率仅 {recall:.0%}，建议尽快复习")
+        elif recall is not None and recall < ALERT_RECALL_THRESHOLD:
+            parts.append(f"该知识点已开始遗忘（回忆概率 {recall:.0%}），建议复习")
         if node.kp_id in gap_set or node.name in gap_set:
             parts.append("这是一个知识薄弱点")
         if node.prerequisites_met:

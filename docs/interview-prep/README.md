@@ -17,19 +17,21 @@
 |---|------|------|----------|
 | 1 | 多 Agent 编排（LangGraph StateGraph） | [01-multi-agent-orchestration.md](01-multi-agent-orchestration.md) | 延迟 -40%，P95 135s→82s，吞吐 39→65/h |
 | 2 | 标准化 Agent 执行框架（Harness） | [02-agent-harness.md](02-agent-harness.md) | 样板代码 -60%，失败率 8%→0.3% |
-| 3 | RAG 混合检索 + 语义分块 + 重排序 | [03-rag-hybrid-retrieval.md](03-rag-hybrid-retrieval.md) | HitRate@3 0.83→0.930，P95 增量 <150ms |
-| 4 | RAG 评测与优化闭环 | [04-rag-evaluation.md](04-rag-evaluation.md) | MRR 0.841，HitRate@3 0.930，P@1 0.755，Faithfulness 0.620 |
+| 3 | RAG 混合检索 + 语义分块 + 重排序 | [03-rag-hybrid-retrieval.md](03-rag-hybrid-retrieval.md) | 双路召回实测 MRR 0.841 / HR@3 0.930（n=200，**重排未启用**）；P50 19.4ms / P95 54.7ms |
+| 4 | RAG 评测与优化闭环 | [04-rag-evaluation.md](04-rag-evaluation.md) | n=200：MRR 0.841 / HR@3 0.930 / P@1 0.755；n=20：MRR 0.900；生成侧 Faithfulness 启发式 0.010 / LLM-judge 0.277 |
 | 5 | 三层记忆架构 | [05-memory-system.md](05-memory-system.md) | token 开销 -60%，context 构建 P95 ~18ms |
 | 6 | 工具调用 + 结构化输出双模式 | [06-tools-structured-output.md](06-tools-structured-output.md) | 解析成功率 85%→98%+，出题率 88%→97% |
 
 ## 硬数字速记表（面试前必背）
 
-- 6 Agent 生成管线：Planner → Guardian → Designer∥Coder → Content Auditor → Assessment
+- **Agent 数量口径**：8 个 Agent = 1 编排者（Orchestrator，即 StateGraph 本身，无 LLM）+ 7 执行者；其中 6 个进生成管线（Planner→Guardian→Designer∥Coder→Content Auditor→Assessment），Mentor 是第 7 个执行者但走独立 RAG 链路不进 StateGraph。详见 [01-multi-agent-orchestration.md](01-multi-agent-orchestration.md#0-前置澄清项目里到底有几个agent面试官必问)
+- StateGraph 共 9 个节点 = 6 个 Agent 节点（planner/guardian/designer/coder/content_auditor/assessment）+ 3 个合成节点（merge/retry_prep/assess_degraded，非 Agent）
 - 8 个 Agent 总规模；6 个迁移至 Harness；15 个 Docker 服务
 - 574 项后端 pytest + 前端 Vitest + Playwright E2E；CI 覆盖率门禁 40%
 - 3 层记忆：Sensory（请求级）→ Redis 短时（1h TTL，50 轮）→ PG 长时（Episodic + Semantic，召回 10 条）
-- RAG：双路召回（Neo4j + ChromaDB），top-20 粗筛 → Cross-Encoder 精排 top-5，上下文预算 2000 字符
-- 评测：9 个指标函数，8 项对外指标，20 条标注数据集 + 图谱自动生成集，LLM-judge 限制 3 条/轮
+- RAG：双路召回（Neo4j + ChromaDB），**Neo4j 关键词打分按匹配质量分档**（exact/prefix/substring/jaccard），融合默认 **RRF**（k=60），可切 `minmax`/`score`；Cross-Encoder 精排 top-5 **已实现但默认关闭**；上下文预算 2000 字符
+- 评测：9 个指标函数，8 项对外指标，n=20 标注冒烟集 + n=200 图谱自动生成集，LLM-judge 限制 3 条/轮
+- **RAG 实测口径**：所有基准报告 `reranker_enabled=false`；n=20 → MRR 0.900 / HR@3 0.950；n=200 → MRR 0.841 / HR@3 0.930 / HR@5 0.960 / P@1 0.755；全管线 P50 19.4ms / P95 54.7ms
 - 工具系统：ToolRegistry + 3 个内置工具（kg_search / resource_search / forgetting_check）
 - 结构化输出：OutputSchema 双模式（Function Calling / 提示注入），解析鲁棒（剥围栏 + 定位 JSON + Pydantic 校验）
 - 熔断器：连续 5 次失败熔断，恢复窗口 60s；RetryHandler 指数退避（1s/2s/4s），网络类异常才重试

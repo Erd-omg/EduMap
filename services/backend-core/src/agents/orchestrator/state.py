@@ -22,7 +22,7 @@ class EduMapState(TypedDict, total=False):
     task_input: str
     task_type: str
     current_phase: str  # EXTRACT | VALIDATE | GENERATE | REVIEW | ASSESS
-    overall_status: str  # running | completed | failed | degraded
+    overall_status: str  # running | completed | failed | degraded | cancelled
 
     # ── Identity ────────────────────────────────────────────────────────
     user_id: str

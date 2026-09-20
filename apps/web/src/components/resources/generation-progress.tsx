@@ -50,6 +50,7 @@ export function GenerationProgress({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const restoringRef = useRef(false); // true when restoring session on page refresh
+  const cancelRequestedRef = useRef(false); // double-click guard (sync, pre-render)
 
   const completedCount = agents.filter((a) => a.status === 'completed').length;
   const progress = agents.length > 0 ? Math.round((completedCount / agents.length) * 100) : 0;
@@ -61,11 +62,16 @@ export function GenerationProgress({
     };
   }, []);
 
+  // NOTE: 不在此处用 pagehide + sendBeacon 硬取消会话——pagehide 在「刷新」
+  // 时同样触发，会误杀进行中的会话并破坏本组件的「刷新后恢复」能力
+  // （restoringRef）。关闭标签页的场景由后端 SSE 600s 超时兜底。
+
   // Connect to SSE when sessionId changes
   useEffect(() => {
     // Close previous connection
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
+    cancelRequestedRef.current = false; // new session → allow cancelling again
 
     if (!sessionId) {
       setOverallStatus('idle');
@@ -97,6 +103,24 @@ export function GenerationProgress({
           setAgents(AGENTS);
           setErrorMessage(data.errors?.[0]?.error || '生成过程出错');
           // NOT calling onError — same restore reason as above.
+          return;
+        }
+        if (data.overall_status === 'cancelled') {
+          setOverallStatus('cancelled');
+          const agentResults = data.agent_results || {};
+          setAgents(
+            AGENTS.map((a) => ({
+              ...a,
+              status: agentResults[a.agent] ? ('completed' as const) : ('pending' as const),
+            })),
+          );
+          // No more events will arrive — close the stream. (Referencing
+          // eventSourceRef avoids the TS "used before declaration" error that
+          // `es` (declared below this callback) would trigger.)
+          eventSourceRef.current?.close();
+          eventSourceRef.current = null;
+          restoringRef.current = false;
+          // NOT calling onComplete — restore semantics (same as completed/failed).
           return;
         }
 
@@ -154,15 +178,25 @@ export function GenerationProgress({
     });
 
     es.addEventListener('workflow_complete', (event: MessageEvent) => {
-      let succeeded = true;
+      let status = '';
       let errMsg = '';
       try {
         const data = JSON.parse(event.data);
-        succeeded = data.status !== 'failed';
+        status = data.status || '';
         errMsg = data.error || '';
       } catch {
         // Ignore parse errors
       }
+      if (status === 'cancelled') {
+        // Backend cancelled (pagehide beacon, another tab) — never treat as success.
+        setOverallStatus('cancelled');
+        setErrorMessage(null);
+        es.close();
+        eventSourceRef.current = null;
+        onComplete?.();
+        return;
+      }
+      const succeeded = status !== 'failed';
       // Mark all remaining pending/running agents as completed
       setAgents((prev) =>
         prev.map((a) =>
@@ -227,13 +261,24 @@ export function GenerationProgress({
     setErrorMessage(null);
   }, []);
 
-  const handleCancel = useCallback(() => {
+  const handleCancel = useCallback(async () => {
+    if (!sessionId || cancelRequestedRef.current) return;
+    cancelRequestedRef.current = true;
+    const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+    // Best-effort: tell the backend to hard-cancel the generation. Never
+    // block the UI on it — on network failure we still close locally and the
+    // backend session TTLs out (or is picked up by the pagehide beacon).
+    try {
+      await fetch(`${API_BASE}/api/v1/orchestrator/cancel/${sessionId}`, { method: 'POST' });
+    } catch {
+      // ignore
+    }
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     setOverallStatus('cancelled');
     setErrorMessage(null);
     onComplete?.();
-  }, [onComplete]);
+  }, [sessionId, onComplete]);
 
   if (overallStatus === 'idle') return null;
 

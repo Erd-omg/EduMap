@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { getUserId } from '@/lib/user-id';
 
@@ -16,6 +16,10 @@ export default function SettingsPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
 
+  // 保存从 server 拿到的完整 profile dict；
+  // 保存时做"深度合并"，避免 settings 的显式字段抹掉 SSE 推过来的 6 维画像
+  const serverProfileRef = useRef<Record<string, unknown>>({});
+
   // Load profile on mount
   useEffect(() => {
     const loadProfile = async () => {
@@ -23,15 +27,31 @@ export default function SettingsPage() {
         const res = await fetch(`${PROFILE_BASE}/api/v1/profiles/${getUserId()}`);
         if (res.ok) {
           const data = await res.json();
-          const p = data.profile || data;
-          if (p.display_name) setDisplayName(p.display_name);
-          if (p.interaction_style) {
-            const topStyle = Object.entries(p.interaction_style)
-              .sort(([, a], [, b]) => (b as number) - (a as number));
-            if (topStyle.length > 0) setInteractionStyle(topStyle[0][0] as string);
+          const p: Record<string, unknown> = (data.profile && typeof data.profile === 'object')
+            ? data.profile
+            : (data || {});
+          serverProfileRef.current = { ...p };
+
+          if (typeof p.display_name === 'string') setDisplayName(p.display_name);
+          const is = p.interaction_style;
+          if (is && typeof is === 'object') {
+            const entries = Object.entries(is as Record<string, number>);
+            if (entries.length > 0) {
+              entries.sort(([, a], [, b]) => b - a);
+              const top = entries[0][0];
+              if (['visual', 'textual', 'interactive', 'auditory'].includes(top)) {
+                setInteractionStyle(top);
+              }
+            }
           }
-          if (p.focus_characteristics?.recommended_session_length) {
-            setSessionLength(p.focus_characteristics.recommended_session_length);
+          const fc = p.focus_characteristics as
+            | { recommended_session_length?: number }
+            | undefined;
+          if (fc?.recommended_session_length) {
+            setSessionLength(fc.recommended_session_length);
+          }
+          if (typeof p.notifications_enabled === 'boolean') {
+            setNotificationsEnabled(p.notifications_enabled);
           }
         }
       } catch {
@@ -46,22 +66,32 @@ export default function SettingsPage() {
     setIsSaving(true);
     setSaveMessage(null);
     try {
+      // 关键：先合并现有 server profile（保留 6 维结构化字段），
+      // 再覆盖 settings 关心的字段（display_name / interaction_style /
+      // focus_characteristics / notifications_enabled）。
+      const merged: Record<string, unknown> = { ...serverProfileRef.current };
+      merged.display_name = displayName;
+      merged.interaction_style = {
+        [interactionStyle]: 1.0,
+        ...(interactionStyle !== 'visual' ? { visual: 0.3 } : {}),
+        ...(interactionStyle !== 'textual' ? { textual: 0.3 } : {}),
+        ...(interactionStyle !== 'interactive' ? { interactive: 0.3 } : {}),
+      };
+      merged.focus_characteristics = {
+        ...((merged.focus_characteristics as object | undefined) ?? {}),
+        recommended_session_length: sessionLength,
+      };
+      merged.notifications_enabled = notificationsEnabled;
+
       await fetch(`${PROFILE_BASE}/api/v1/profiles/${getUserId()}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          display_name: displayName,
-          interaction_style: {
-            [interactionStyle]: 1.0,
-            ...(interactionStyle !== 'visual' ? { visual: 0.3 } : {}),
-            ...(interactionStyle !== 'textual' ? { textual: 0.3 } : {}),
-            ...(interactionStyle !== 'interactive' ? { interactive: 0.3 } : {}),
-          },
-          focus_characteristics: {
-            recommended_session_length: sessionLength,
-          },
+          profile_data: merged,
+          notifications_enabled: notificationsEnabled,
         }),
       });
+      serverProfileRef.current = merged;
       setSaveMessage('✅ 设置已保存');
       setTimeout(() => setSaveMessage(null), 3000);
     } catch {

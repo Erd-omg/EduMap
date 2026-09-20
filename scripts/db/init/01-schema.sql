@@ -66,6 +66,22 @@ CREATE INDEX IF NOT EXISTS idx_learning_paths_user_id ON learning_paths(user_id)
 CREATE INDEX IF NOT EXISTS idx_learning_paths_active ON learning_paths(active);
 CREATE INDEX IF NOT EXISTS idx_learning_paths_user_active ON learning_paths(user_id, active);
 
+-- Path recommendations (每次推荐结果落库，支撑通知与历史回溯)
+CREATE TABLE IF NOT EXISTS path_recommendations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id VARCHAR(255) NOT NULL,
+    course_id VARCHAR(255) NOT NULL,
+    kp_id VARCHAR(255) NOT NULL,
+    kp_name VARCHAR(512),
+    reason TEXT,
+    recommended_content_type VARCHAR(50),
+    estimated_session_min INTEGER,
+    source VARCHAR(50) NOT NULL DEFAULT 'path',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_path_reco_user_id ON path_recommendations(user_id);
+CREATE INDEX IF NOT EXISTS idx_path_reco_user_created ON path_recommendations(user_id, created_at DESC);
+
 -- Forgetting curve state (Ebbinghaus + Bayesian parameters)
 CREATE TABLE IF NOT EXISTS forgetting_curve_state (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

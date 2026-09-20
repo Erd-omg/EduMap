@@ -6,6 +6,7 @@ Endpoints::
     POST   /api/v1/orchestrator/generate   — start a new generation workflow
     GET    /api/v1/orchestrator/status/{session_id} — poll progress
     GET    /api/v1/orchestrator/stream/{session_id}  — SSE progress stream
+    POST   /api/v1/orchestrator/cancel/{session_id} — request hard cancellation
 """
 
 from __future__ import annotations
@@ -35,6 +36,15 @@ router = APIRouter(prefix="/api/v1/orchestrator", tags=["orchestrator"])
 # In-memory SSE event queues (process-local by nature — cannot be serialized to Redis)
 _sse_queues: dict[str, asyncio.Queue] = {}
 
+# Process-local task registry so the cancel endpoint can find (and cancel)
+# the running generation Task.  Like _sse_queues, this is per-process.
+_tasks: dict[str, asyncio.Task] = {}
+
+# SSE read timeout: when no event arrives for this long we emit a heartbeat
+# and KEEP the stream alive instead of tearing it down.  Real generations
+# (6-agent LLM pipeline) can easily exceed the old hard 300s event gap.
+_SSE_TIMEOUT = 300
+
 
 def _get_short_term(request: Request) -> ShortTermMemory | None:
     """Get the ShortTermMemory from app state."""
@@ -58,6 +68,11 @@ class GenerateRequest(BaseModel):
 class GenerateResponse(BaseModel):
     session_id: str
     status: str  # processing | completed | failed
+
+
+class CancelResponse(BaseModel):
+    session_id: str
+    status: str  # cancelling | completed | failed | cancelled
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────
@@ -99,10 +114,56 @@ async def start_generation(body: GenerateRequest, request: Request):
     # SSE events queue stays in-memory (process-local by nature)
     _sse_queues[session_id] = asyncio.Queue()
 
-    # Fire generation in the background
-    asyncio.create_task(_run_generation(session_id, request))
+    # Fire generation in the background.  Keep the Task handle in _tasks so
+    # the cancel endpoint can request hard cancellation; _run_generation's
+    # finally block pops it (and the SSE queue) when the run terminates.
+    task = asyncio.create_task(_run_generation(session_id, request))
+    _tasks[session_id] = task
 
     return GenerateResponse(session_id=session_id, status="processing")
+
+
+@router.post("/cancel/{session_id}", response_model=CancelResponse)
+async def cancel_generation(session_id: str, request: Request):
+    """Request hard cancellation of an in-flight generation.
+
+    Cancels the background ``asyncio.Task`` running the LangGraph workflow.
+    Idempotent: a second POST while cancellation is pending returns the same
+    ``cancelling`` status with 200.  A finished session returns its persisted
+    terminal status.  409 when Redis says the session is ``running`` but no
+    Task is tracked in this process (e.g. a different uvicorn worker owns it);
+    404 for unknown sessions.
+    """
+    task = _tasks.get(session_id)
+    short_term = _get_short_term(request)
+
+    if task is None or task.done():
+        # No tracked (running) task — fall back to the persisted state.
+        if short_term:
+            session_mem = await short_term.get_session(session_id)
+            if session_mem:
+                state = session_mem.metadata.get("orchestrator_state") or {}
+                status = state.get("overall_status", "unknown")
+                if status in ("completed", "failed", "cancelled"):
+                    return CancelResponse(session_id=session_id, status=status)
+                if status == "running":
+                    raise HTTPException(
+                        status_code=409,
+                        detail="No active generation task tracked for session",
+                    )
+        raise HTTPException(status_code=404, detail="Session not found or already finished")
+
+    if task.cancelling():
+        # Cancellation already pending — idempotent no-op.
+        return CancelResponse(session_id=session_id, status="cancelling")
+
+    # Immediate marker so GET /status reflects cancellation right away; the
+    # authoritative write happens in the task's CancelledError handler.
+    await _mark_session_cancelled(short_term, session_id)
+
+    task.cancel()
+    logger.info("Cancellation requested for generation %s", session_id)
+    return CancelResponse(session_id=session_id, status="cancelling")
 
 
 @router.get("/status/{session_id}")
@@ -161,23 +222,8 @@ async def stream_events(session_id: str):
     if not queue:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    async def event_generator():
-        while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=300)
-                if event.get("type") == "workflow_complete":
-                    yield f"event: workflow_complete\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    break
-                if event.get("type") == "workflow_error":
-                    yield f"event: workflow_error\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    break
-                yield f"event: {event.get('type', 'message')}\ndata: {json.dumps(event.get('data', event), ensure_ascii=False)}\n\n"
-            except asyncio.TimeoutError:
-                yield f"event: heartbeat\ndata: {json.dumps({'type': 'heartbeat', 'reason': 'timeout', 'timestamp': time.time()})}\n\n"
-                break
-
     return StreamingResponse(
-        event_generator(),
+        _sse_event_generator(session_id, queue),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -187,29 +233,150 @@ async def stream_events(session_id: str):
     )
 
 
+async def _sse_event_generator(session_id: str, queue: asyncio.Queue):
+    """Yield SSE frames for a session until it terminates.
+
+    Ends on: a terminal event (``workflow_complete`` / ``workflow_error``),
+    client disconnect, or the session's queue being popped (see below).
+    Module-level so it can be consumed directly in tests on one event loop
+    (cross-thread ``queue.put_nowait`` cannot reliably wake the generator
+    inside a TestClient thread).
+    """
+    while True:
+        # Session finished and its queue was popped by _run_generation's
+        # finally → stop.  This bounds multi-client zombies: a single
+        # queue.get() delivers the terminal event to one waiter, and the
+        # rest would otherwise heartbeat forever.
+        if _sse_queues.get(session_id) is not queue:
+            break
+        try:
+            event = await asyncio.wait_for(queue.get(), timeout=_SSE_TIMEOUT)
+            if event.get("type") == "workflow_complete":
+                yield f"event: workflow_complete\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                break
+            if event.get("type") == "workflow_error":
+                yield f"event: workflow_error\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                break
+            yield f"event: {event.get('type', 'message')}\ndata: {json.dumps(event.get('data', event), ensure_ascii=False)}\n\n"
+        except asyncio.TimeoutError:
+            # No event for _SSE_TIMEOUTs — emit a heartbeat and KEEP
+            # looping.  Real generations (5+ min) exceed this gap.  The
+            # loop only ends on a terminal event, client disconnect, or
+            # the pop-guard above.
+            yield f"event: heartbeat\ndata: {json.dumps({'type': 'heartbeat', 'reason': 'timeout', 'timestamp': time.time()})}\n\n"
+            continue
+
+
 # ── Background runner ──────────────────────────────────────────────────
 
 
+async def _mark_session_cancelled(
+    short_term: ShortTermMemory | None, session_id: str
+) -> None:
+    """Best-effort immediate cancellation marker.
+
+    Read-modify-write of the FULL ``orchestrator_state`` snapshot (not just
+    the status field) because ``update_metadata`` is a shallow merge — passing
+    ``{"overall_status": "cancelled"}`` alone would wipe ``agent_results`` and
+    ``generated_resources``.  The task's CancelledError handler overwrites
+    this marker with the authoritative in-memory snapshot.
+    """
+    if not short_term:
+        return
+    session_mem = await short_term.get_session(session_id)
+    if not session_mem:
+        return
+    state = dict(session_mem.metadata.get("orchestrator_state") or {})
+    state["overall_status"] = "cancelled"
+    state["errors"] = list(state.get("errors") or []) + [
+        {"agent": "orchestrator", "error": "Generation cancelled by user", "phase": "UNKNOWN"}
+    ]
+    await short_term.update_metadata(session_id, {
+        "orchestrator_state": state,
+        "orchestrator_result": state,
+    })
+
+
+async def _sync_generated_resources(state: dict) -> None:
+    """Best-effort POST of ``generated_resources`` to the resource store.
+
+    Used on the success path and on cancellation (to persist partial
+    resources).  Never raises — failures are logged.
+    """
+    generated = state.get("generated_resources", [])
+    if not generated:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Bind every generated resource to the node the user selected on
+            # /generate.  The planner invents sub-KP ids (e.g.
+            # "kp-linkedlist-basic") that do not exist in the knowledge graph,
+            # so the graph panel could never match them; the selected node id
+            # is a real KG node.
+            selected_kp_id = state.get("knowledge_point_id")
+            sync_payload = [
+                {
+                    # GeneratedResource has no stable id and the resources.id
+                    # column is a UUID — always mint one.
+                    "id": str(uuid.uuid4()),
+                    "user_id": state.get("user_id", "anonymous"),
+                    "name": r.get("title", r.get("type", "resource")),
+                    "type": r.get("type", "explanation"),
+                    "source": "system_generated",
+                    "kp_id": selected_kp_id or r.get("kp_id"),
+                    "kp_name": r.get("kp_name"),
+                    # Persist the generated markdown body so the library /
+                    # graph can open it (the resources table has no separate
+                    # content column).
+                    "description": (r.get("content") or "")[:20000],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "parse_status": "parsed",
+                }
+                for i, r in enumerate(generated)
+            ]
+            await client.post(
+                f"http://localhost:8000/api/v1/resources/sync-generated",
+                json=sync_payload,
+            )
+            logger.info("Synced %d generated resources to resource store", len(generated))
+    except Exception as sync_exc:
+        logger.warning("Failed to sync generated resources: %s", sync_exc)
+
+
 async def _run_generation(session_id: str, request: Request) -> None:
-    """Execute the LangGraph state graph and stream events."""
+    """Execute the LangGraph state graph and stream events.
+
+    ``try`` starts at function entry so a cancellation delivered during the
+    initial ``get_session`` await is still caught and cleaned up, and the
+    early-return paths also run the ``finally``.
+    """
     short_term = _get_short_term(request)
-
-    # Load state from ShortTermMemory
     state: dict = {}
-    if short_term:
-        session_mem = await short_term.get_session(session_id)
-        if session_mem:
-            state = session_mem.metadata.get("orchestrator_state", {})
-    if not state:
-        logger.error("Session %s not found in ShortTermMemory — aborting", session_id)
-        return
-
-    queue: asyncio.Queue = _sse_queues.get(session_id)
-    if not queue:
-        logger.error("SSE queue for session %s not found — aborting", session_id)
-        return
+    queue: asyncio.Queue | None = None
 
     try:
+        # Load state from ShortTermMemory
+        if short_term:
+            session_mem = await short_term.get_session(session_id)
+            if session_mem:
+                state = session_mem.metadata.get("orchestrator_state", {})
+        queue = _sse_queues.get(session_id)
+
+        if not state:
+            logger.error("Session %s not found in ShortTermMemory — aborting", session_id)
+            if queue is not None:
+                # Heartbeat-continue invariant: every path that owns a live
+                # queue must push a terminal event before the finally pops it,
+                # or a connected SSE client would heartbeat forever.
+                await queue.put({
+                    "type": "workflow_error",
+                    "data": {"agent": "orchestrator", "error": "Session state not found"},
+                })
+            return
+        if queue is None:
+            logger.error("SSE queue for session %s not found — aborting", session_id)
+            return
+
         graph = _get_graph()
 
         # Push initial phase events for each agent
@@ -291,7 +458,10 @@ async def _run_generation(session_id: str, request: Request) -> None:
                 # Real 6-agent generation with LLM can take 5+ minutes
                 final_state = await asyncio.wait_for(_graph_runner(), timeout=600)
             except AttributeError:
-                # Fallback: astream() not available in this LangGraph version
+                # Fallback: astream() not available in this LangGraph version.
+                # asyncio.CancelledError (BaseException) passes through this
+                # handler and the TimeoutError handler into the outer
+                # CancelledError handler untouched.
                 final_state = await graph.ainvoke(state)
         except TimeoutError:
             logger.error("Generation %s timed out after 600s — failing session", session_id)
@@ -314,50 +484,49 @@ async def _run_generation(session_id: str, request: Request) -> None:
                 "orchestrator_result": result,
             })
 
-        # ── Sync generated resources to the resource store ────────────────
-        generated = result.get("generated_resources", [])
-        if generated:
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    # Bind every generated resource to the node the user
-                    # selected on /generate.  The planner invents sub-KP ids
-                    # (e.g. "kp-linkedlist-basic") that do not exist in the
-                    # knowledge graph, so the graph panel could never match
-                    # them; the selected node id is a real KG node.
-                    selected_kp_id = result.get("knowledge_point_id")
-                    sync_payload = [
-                        {
-                            # GeneratedResource has no stable id and the
-                            # resources.id column is a UUID — always mint one.
-                            "id": str(uuid.uuid4()),
-                            "user_id": result.get("user_id", "anonymous"),
-                            "name": r.get("title", r.get("type", "resource")),
-                            "type": r.get("type", "explanation"),
-                            "source": "system_generated",
-                            "kp_id": selected_kp_id or r.get("kp_id"),
-                            "kp_name": r.get("kp_name"),
-                            # Persist the generated markdown body so the
-                            # library / graph can open it (the resources
-                            # table has no separate content column).
-                            "description": (r.get("content") or "")[:20000],
-                            "created_at": datetime.now(timezone.utc).isoformat(),
-                            "parse_status": "parsed",
-                        }
-                        for i, r in enumerate(generated)
-                    ]
-                    await client.post(
-                        f"http://localhost:8000/api/v1/resources/sync-generated",
-                        json=sync_payload,
-                    )
-                    logger.info("Synced %d generated resources to resource store", len(generated))
-            except Exception as sync_exc:
-                logger.warning("Failed to sync generated resources: %s", sync_exc)
+        # Sync whatever was generated — success AND timeout both reach here.
+        await _sync_generated_resources(result)
 
         # Push completion
         status = result.get("overall_status", "completed")
         await queue.put({"type": "workflow_complete", "data": {"status": status}})
 
         logger.info("Generation %s completed with status '%s'", session_id, status)
+
+    except asyncio.CancelledError:
+        # Hard cancel.  Single-cancel contract: the pending cancel was consumed
+        # by this very raise, so the awaits below run normally.  A *second*
+        # task.cancel() mid-handler could interrupt them — prevented in practice
+        # by the endpoint's task.cancelling() guard and the frontend's
+        # double-click guard.  asyncio.shield(...) around the cleanup awaits is
+        # optional hardening, not required.
+        logger.info("Generation %s cancelled by user", session_id)
+        if state:
+            state["overall_status"] = "cancelled"
+            state["errors"] = list(state.get("errors") or []) + [
+                {"agent": "orchestrator", "error": "Generation cancelled by user", "phase": "UNKNOWN"}
+            ]
+            if short_term:
+                try:
+                    # Authoritative FULL snapshot — never a partial status-only
+                    # dict, or update_metadata's shallow merge wipes
+                    # agent_results / generated_resources.
+                    await short_term.update_metadata(session_id, {
+                        "orchestrator_state": state,
+                        "orchestrator_result": state,
+                    })
+                except Exception:
+                    logger.exception("Failed to persist cancelled state for %s", session_id)
+            # Best-effort: sync partial resources produced so far.
+            await _sync_generated_resources(state)
+
+        q = queue if queue is not None else _sse_queues.get(session_id)
+        if q is not None:
+            try:
+                await q.put({"type": "workflow_complete", "data": {"status": "cancelled"}})
+            except Exception:
+                logger.debug("Failed to push cancelled event for %s", session_id)
+        raise  # finish the task in the cancelled state
 
     except Exception as exc:
         logger.exception("Generation %s failed", session_id)
@@ -369,10 +538,19 @@ async def _run_generation(session_id: str, request: Request) -> None:
             await short_term.update_metadata(session_id, {
                 "orchestrator_state": state,
             })
-        await queue.put({
-            "type": "workflow_error",
-            "data": {"agent": "orchestrator", "error": str(exc)},
-        })
+        q = queue if queue is not None else _sse_queues.get(session_id)
+        if q is not None:
+            await q.put({
+                "type": "workflow_error",
+                "data": {"agent": "orchestrator", "error": str(exc)},
+            })
+
+    finally:
+        # Only after a terminal event has been pushed: a queue removed here
+        # means new SSE clients get 404 and the pop-guard in stream_events
+        # terminates any straggler stream.  Never before.
+        _sse_queues.pop(session_id, None)
+        _tasks.pop(session_id, None)
 
 
 def _get_graph():

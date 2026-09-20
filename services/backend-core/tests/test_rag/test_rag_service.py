@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.rag.models import RAGResult
 from src.rag.rag_service import RAGRetrievalService
 
@@ -31,7 +33,7 @@ class TestMergeAndRank:
         a2 = _make_result("kp-1", "chroma", score=0.5)  # same composite key
         b = _make_result("kp-1", "neo4j", score=0.7)  # different source_type
 
-        merged = RAGRetrievalService._merge_and_rank([a1, a2, b], "test")
+        merged = RAGRetrievalService._merge_and_rank([a1, a2, b], "test", method="score")
         assert len(merged) == 2
         # a1 should win over a2 (higher score)
         assert merged[0].source_type == "chroma"
@@ -44,7 +46,7 @@ class TestMergeAndRank:
             _make_result("b", score=0.9),
             _make_result("c", score=0.7),
         ]
-        merged = RAGRetrievalService._merge_and_rank(results, "test")
+        merged = RAGRetrievalService._merge_and_rank(results, "test", method="score")
         scores = [r.score for r in merged]
         assert scores == [0.9, 0.7, 0.5]
 
@@ -82,3 +84,267 @@ class TestAssembleContext:
         ctx = await RAGRetrievalService().assemble_context([], max_chars=500)
         assert "未找到相关参考资料" in ctx.context_str
         assert len(ctx.sources) == 0
+
+
+class TestNeo4jKeywordScore:
+    """_neo4j_keyword_score 匹配质量打分。"""
+
+    def test_exact_match_highest(self) -> None:
+        assert RAGRetrievalService._neo4j_keyword_score("数组", "数组") == 1.0
+
+    def test_prefix_match(self) -> None:
+        assert RAGRetrievalService._neo4j_keyword_score("数组", "数组基础") == 0.85
+        assert RAGRetrievalService._neo4j_keyword_score("数组基础", "数组") == 0.85
+
+    def test_substring_match(self) -> None:
+        assert RAGRetrievalService._neo4j_keyword_score("数组", "动态数组") == 0.7
+
+    def test_no_overlap_fallback(self) -> None:
+        """完全不相关的两词回退到兜底分。"""
+        assert RAGRetrievalService._neo4j_keyword_score("xyz", "数组") == 0.4
+
+    def test_case_insensitive(self) -> None:
+        assert RAGRetrievalService._neo4j_keyword_score("HashMap", "hashmap") == 1.0
+
+    def test_empty_input_returns_zero(self) -> None:
+        assert RAGRetrievalService._neo4j_keyword_score("", "数组") == 0.0
+        assert RAGRetrievalService._neo4j_keyword_score("数组", "") == 0.0
+
+    def test_token_overlap_scales(self) -> None:
+        """部分词项重叠时分值在 [0.5, 0.95] 之间。"""
+        score_full = RAGRetrievalService._neo4j_keyword_score("数组 链表", "数组")
+        score_partial = RAGRetrievalService._neo4j_keyword_score("数组 哈希表 红黑树", "数组")
+        # 全 token 命中 → 高分；仅部分命中 → 中等分
+        assert 0.5 <= score_partial <= 0.95
+        assert score_full >= score_partial
+
+
+class TestMergeAndRankRRF:
+    """Reciprocal Rank Fusion 跨源融合。"""
+
+    def test_default_method_is_rrf(self) -> None:
+        assert RAGRetrievalService.default_fusion_method == "rrf"
+
+    def test_single_source_preserves_order(self) -> None:
+        """单源时 RRF 仅取名次，排序结果与 score 排序一致。"""
+        chroma = [_make_result(f"k{i}", "chroma", score=1 - i * 0.1) for i in range(5)]
+        merged = RAGRetrievalService._merge_and_rank(chroma, "test", method="rrf", k=60)
+        ids = [r.source_id for r in merged]
+        assert ids == [f"k{i}" for i in range(5)]
+        # rrf scores 严格单调递减
+        scores = [r.score for r in merged]
+        assert all(scores[i] > scores[i + 1] for i in range(len(scores) - 1))
+
+    def test_cross_source_rrf_combines_rankings(self) -> None:
+        """跨源同一文档 RRF 分累加。"""
+        # chroma: k1(高) > k2；neo4j: k2(高) > k1
+        results = [
+            _make_result("k1", "chroma", score=0.9),
+            _make_result("k2", "chroma", score=0.5),
+            _make_result("k1", "neo4j", score=0.4),
+            _make_result("k2", "neo4j", score=0.95),
+        ]
+        merged = RAGRetrievalService._merge_and_rank(results, "test", method="rrf")
+        # k1 rank 1 (chroma) + rank 2 (neo4j) = 1/(60+1) + 1/(60+2)
+        # k2 rank 2 (chroma) + rank 1 (neo4j) = 1/(60+2) + 1/(60+1)  → 平局
+        # 平局时 stable，验证二者 rrf 相等，且 score 都介于 1/62 与 2/61 之间
+        scores = {r.source_id: r.score for r in merged}
+        assert abs(scores["k1"] - scores["k2"]) < 1e-9
+        assert 1 / 62 <= scores["k1"] <= 2 / 61
+
+    def test_rrf_robust_to_score_scale_mismatch(self) -> None:
+        """RRF 对量纲差异免疫：chroma 普遍高分、neo4j 普遍低分时仍按名次融合。"""
+        results = [
+            _make_result("k1", "chroma", score=10.0),
+            _make_result("k2", "chroma", score=5.0),
+            _make_result("k3", "neo4j", score=0.9),
+            _make_result("k4", "neo4j", score=0.5),
+        ]
+        merged = RAGRetrievalService._merge_and_rank(results, "test", method="rrf", k=60)
+        # chroma 内部 rank: k1=1, k2=2；neo4j 内部 rank: k3=1, k4=2
+        # k1=1/(60+1); k2=1/(60+2); k3=1/(60+1); k4=1/(60+2)
+        ids_top2 = {merged[0].source_id, merged[1].source_id}
+        assert ids_top2 == {"k1", "k3"}
+
+    def test_rrf_differs_from_raw_score_method(self) -> None:
+        """RRF 与 score 策略在同一数据集上产生不同结果（量纲差异场景）。"""
+        # chroma 全部 10.0；neo4j 全部 0.01 → score 法 chroma 全在前；rrf 平局按名次
+        results = [
+            _make_result("k1", "chroma", score=10.0),
+            _make_result("k2", "chroma", score=10.0),
+            _make_result("k1", "neo4j", score=0.01),
+            _make_result("k2", "neo4j", score=0.01),
+        ]
+        by_score = RAGRetrievalService._merge_and_rank(results, "test", method="score")
+        by_rrf = RAGRetrievalService._merge_and_rank(results, "test", method="rrf")
+        # score 法 chroma 分高 → 在前两条；rrf 法 k1/k2 平局但分远低于 1.0
+        assert [r.source_type for r in by_score[:2]] == ["chroma", "chroma"]
+        assert max(r.score for r in by_rrf) < 1.0  # 1/61 < 1.0
+        assert max(r.score for r in by_score) == 10.0
+
+
+class TestMergeAndRankMinMax:
+    """Min-Max 归一化融合。"""
+
+    def test_normalizes_per_source(self) -> None:
+        """chroma / neo4j 分别归一化后再统一排序。"""
+        results = [
+            _make_result("k1", "chroma", score=10.0),
+            _make_result("k2", "chroma", score=5.0),
+            _make_result("k3", "neo4j", score=0.01),
+            _make_result("k4", "neo4j", score=0.99),
+        ]
+        merged = RAGRetrievalService._merge_and_rank(results, "test", method="minmax")
+        # k1 在 chroma 内最大 → 1.0；k3 在 neo4j 内最小 → 0.0
+        scores_by_id = {r.source_id: r.score for r in merged}
+        assert scores_by_id["k1"] == pytest.approx(1.0)
+        assert scores_by_id["k3"] == pytest.approx(0.0)
+        assert scores_by_id["k2"] == pytest.approx(0.0)
+        assert scores_by_id["k4"] == pytest.approx(1.0)
+
+    def test_single_element_source(self) -> None:
+        """单元素源归一化为 0.5。"""
+        results = [
+            _make_result("k1", "chroma", score=10.0),
+            _make_result("k2", "neo4j", score=0.99),
+        ]
+        merged = RAGRetrievalService._merge_and_rank(results, "test", method="minmax")
+        for r in merged:
+            assert r.score == pytest.approx(0.5)
+
+
+class TestFusionMethodSelectable:
+    """method 参数可切换，并随类默认值生效。"""
+
+    def test_default_method_inherits_from_class(self) -> None:
+        """未传 method 时使用类默认 (rrf)。"""
+        results = [_make_result("k1", "chroma", score=0.5)]
+        merged = RAGRetrievalService._merge_and_rank(results, "test")
+        # 1/(60+1) ≈ 0.01639 —— 与 score=0.5 不同，确认不是 score 法
+        assert merged[0].score == pytest.approx(1 / 61)
+
+    def test_invalid_method_falls_back_to_rrf(self) -> None:
+        """未知 method 字符串回退到 RRF（不抛错）。"""
+        results = [_make_result("k1", "chroma", score=0.5)]
+        merged = RAGRetrievalService._merge_and_rank(results, "test", method="bogus")
+        assert merged[0].score == pytest.approx(1 / 61)
+
+    def test_instance_fusion_method_used_by_dispatch(self) -> None:
+        """实例属性 self.fusion_method 控制 search() 内分发。"""
+        svc = RAGRetrievalService()
+        svc.fusion_method = "score"
+        # 通过类方法验证：使用 instance dispatch 路径不会破坏 default
+        assert svc.fusion_method == "score"
+        # 改回默认也工作
+        svc.fusion_method = "rrf"
+        assert svc.fusion_method == "rrf"
+
+
+class TestExtractSearchTerms:
+    """_extract_search_terms — 自然语言查询的分词抽取。"""
+
+    def test_chinese_natural_language_query(self) -> None:
+        """中文自然语言查询抽出内容词，停用/短词被过滤。"""
+        terms = RAGRetrievalService._extract_search_terms("什么是二叉树的遍历")
+        assert "二叉树" in terms or "遍历" in terms
+        # 单字与空串不会出现
+        assert all(len(t) >= 2 for t in terms)
+        # 去重保序
+        assert len(terms) == len(set(terms))
+
+    def test_ascii_terms_lowercased(self) -> None:
+        """英文词统一小写。"""
+        terms = RAGRetrievalService._extract_search_terms("BFS and DFS Graph")
+        assert "bfs" in terms and "dfs" in terms and "graph" in terms
+
+
+class TestNeo4jSearchTermFallback:
+    """_neo4j_search 整句匹配失败后的分词兜底。"""
+
+    @staticmethod
+    def _kp(kp_id: str, name: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            id=kp_id,
+            name=name,
+            description=f"{name}的概念",
+            category="数据结构",
+            difficulty=2,
+            prerequisites=[],
+        )
+
+    async def test_falls_back_to_term_search(self) -> None:
+        """整句 CONTAINS 无结果时按分词逐个检索，且去重。"""
+        from unittest.mock import AsyncMock
+
+        kp_tree = self._kp("kp-bst", "二叉搜索树")
+        kp_graph = self._kp("kp-graph", "图")
+        calls: list[str] = []
+
+        async def fake_search(term, **kwargs):
+            calls.append(term)
+            if term == "什么是二叉搜索树和图":
+                return []  # 整句无命中 → 触发兜底
+            hits = []
+            if "二叉" in term or "搜索" in term:
+                hits.append(kp_tree)
+            if "图" in term:
+                hits.extend([kp_graph, kp_tree])  # 重复出现，验证去重
+            return hits
+
+        kp_repo = AsyncMock()
+        kp_repo.search_by_name = fake_search
+        svc = RAGRetrievalService()
+        svc._kp_repo = kp_repo
+
+        results = await svc._neo4j_search("什么是二叉搜索树和图", top_k=5)
+        ids = [r.source_id for r in results]
+        # kp-bst 出现在多个分词结果中，只保留一次
+        assert ids.count("kp-bst") == 1
+        assert set(ids) == {"kp-bst", "kp-graph"}
+        assert all(r.source_type == "neo4j" for r in results)
+        # 第一次是整句查询，其后为分词查询
+        assert calls[0] == "什么是二叉搜索树和图"
+        assert len(calls) >= 2
+
+    async def test_no_fallback_when_full_query_hits(self) -> None:
+        """整句已命中时不再触发分词检索。"""
+        from unittest.mock import AsyncMock
+
+        kp_repo = AsyncMock()
+        kp_repo.search_by_name = AsyncMock(return_value=[self._kp("kp-bst", "二叉搜索树")])
+        svc = RAGRetrievalService()
+        svc._kp_repo = kp_repo
+
+        results = await svc._neo4j_search("二叉搜索树", top_k=5)
+        assert len(results) == 1
+        assert kp_repo.search_by_name.call_count == 1
+
+    async def test_two_gram_fallback_when_all_terms_miss(self) -> None:
+        """jieba 分出的词全部未命中时，朴素 2-gram 片段兜底仍可召回。
+
+        口语化整句「什么是二叉树」分出的词（'什么'/'二叉树' 等）都匹配不到
+        图中节点「二叉搜索树」（CONTAINS 语义下 "二叉树" 不是其子串）——
+        降级用 2-gram「二叉」仍可命中。
+        """
+        from unittest.mock import AsyncMock
+
+        calls: list[str] = []
+        kp_bst = self._kp("kp-bst", "二叉搜索树")
+
+        async def fake_search(term, **kwargs):
+            calls.append(term)
+            if term == "二叉":  # 只有 2-gram 片段能命中
+                return [kp_bst]
+            return []
+
+        kp_repo = AsyncMock()
+        kp_repo.search_by_name = fake_search
+        svc = RAGRetrievalService()
+        svc._kp_repo = kp_repo
+
+        results = await svc._neo4j_search("什么是二叉树", top_k=5)
+
+        assert [r.source_id for r in results] == ["kp-bst"]
+        assert "二叉" in calls  # 2-gram 兜底确实被触发

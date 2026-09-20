@@ -18,6 +18,30 @@ logger = logging.getLogger(__name__)
 _RESOURCE_COLLECTION = "resource_chunks"
 
 
+def _naive_tokenize(text: str) -> list[str]:
+    """轻量切分：ASCII 词按空白分，中文按字符 + 连续 2-gram（jieba 不可用时的兜底）。"""
+    out: list[str] = []
+    buf: list[str] = []
+    for ch in text.lower():
+        if ch.isascii() and ch.isalnum():
+            buf.append(ch)
+        else:
+            if buf:
+                out.append("".join(buf))
+                buf = []
+            if not ch.isspace():
+                out.append(ch)
+    if buf:
+        out.append("".join(buf))
+    # 中文 2-gram（提高短查询的重叠召回）
+    grams = []
+    for i in range(len(text) - 1):
+        pair = text[i : i + 2].lower()
+        if any(not c.isascii() for c in pair) and not pair.isspace():
+            grams.append(pair)
+    return out + grams
+
+
 class RAGRetrievalService:
     """Hybrid retrieval service for Mentor RAG.
 
@@ -40,6 +64,12 @@ class RAGRetrievalService:
         self._reranker: Any = None  # Set by main.py when reranker is enabled
         self._expand_query_enabled: bool = False  # Set externally
         self._expand_query_max_terms: int = 5     # Set externally
+        # Hybrid fusion strategy: "rrf" (default) | "minmax" | "score"
+        self.fusion_method: str = self.default_fusion_method
+        self.fusion_k: int = 60  # RRF 常数
+
+    # 默认融合策略（子类或 main.py 可覆盖；亦可由 Settings.hybrid_fusion_method 注入）
+    default_fusion_method: str = "rrf"
 
     async def search(self, query: str, top_k: int = 5) -> list[RAGResult]:
         """Run hybrid search across vector index and KG, with optional reranking."""
@@ -73,7 +103,9 @@ class RAGRetrievalService:
                 logger.warning("Neo4j search failed: %s", exc)
 
         # ── 3. Merge, deduplicate, rank ──────────────────────────────────
-        merged = self._merge_and_rank(results, chroma_query)
+        merged = self._merge_and_rank(
+            results, chroma_query, method=self.fusion_method, k=self.fusion_k
+        )
 
         # ── 4. Cross-encoder reranking (if available) ────────────────────
         if self._reranker is not None and len(merged) > top_k:
@@ -198,12 +230,98 @@ class RAGRetrievalService:
             logger.exception("ChromaDB search error")
             return []
 
+    @staticmethod
+    def _neo4j_keyword_score(query: str, name: str) -> float:
+        """对 Neo4j 关键字命中按匹配质量打分（量纲 [0, 1]）。
+
+        用于替代原先全部填 1.0 的做法，使融合阶段能够分辨「完全匹配」与「模糊包含」。
+        规则（从高到低）：
+          1. 完全相等                              → 1.00
+          2. 一端是另一端的前缀                     → 0.85
+          3. 子串包含                              → 0.70
+          4. 词项 Jaccard 重叠 > 0                  → 0.50 + 0.45 · jaccard（封顶 0.95）
+          5. 无重叠（兜底）                        → 0.40
+        """
+        q = query.strip().lower()
+        n = name.strip().lower()
+        if not q or not n:
+            return 0.0
+        if q == n:
+            return 1.0
+        if n.startswith(q) or q.startswith(n):
+            return 0.85
+        if q in n or n in q:
+            return 0.7
+
+        # 中文友好的词项切分：优先 jieba（若已安装且加载），否则按字符与 ASCII 段拆分
+        try:
+            import jieba  # type: ignore[import-not-found]
+
+            q_tokens = {t for t in jieba.lcut(q) if t.strip()}
+            n_tokens = {t for t in jieba.lcut(n) if t.strip()}
+        except Exception:
+            q_tokens = set(_naive_tokenize(q))
+            n_tokens = set(_naive_tokenize(n))
+
+        if not q_tokens or not n_tokens:
+            return 0.4
+        overlap = len(q_tokens & n_tokens)
+        if overlap == 0:
+            return 0.4
+        union = len(q_tokens | n_tokens) or 1
+        return min(0.95, 0.5 + 0.45 * (overlap / union))
+
+    @staticmethod
+    def _extract_search_terms(query: str) -> list[str]:
+        """从自然语言查询中抽出可用于 CONTAINS 检索的词项（去重保序）。"""
+        terms: list[str] = []
+        seen: set[str] = set()
+        try:
+            import jieba  # type: ignore[import-not-found]
+
+            words = [w.strip().lower() for w in jieba.cut(query, cut_all=False)]
+        except Exception:
+            words = [w for w in _naive_tokenize(query) if len(w) >= 2]
+        for w in words:
+            if len(w) >= 2 and w not in seen:
+                seen.add(w)
+                terms.append(w)
+        return terms
+
     async def _neo4j_search(self, query: str, top_k: int) -> list[RAGResult]:
-        """Search Neo4j knowledge graph by name/category."""
+        """Search Neo4j knowledge graph by name/category, scoring by match quality."""
         if self._kp_repo is None:
             return []
 
         kps = await self._kp_repo.search_by_name(query)
+        seen_ids: set[str] = set()
+        if not kps:
+            # 整句 CONTAINS 匹配不到时，按分词逐个检索（自然语言查询兜底）
+            for term in self._extract_search_terms(query):
+                try:
+                    term_kps = await self._kp_repo.search_by_name(term)
+                except Exception:
+                    continue
+                for kp in term_kps:
+                    if kp.id not in seen_ids:
+                        seen_ids.add(kp.id)
+                        kps.append(kp)
+        if not kps:
+            # jieba 分出的词也全部未命中时（口语化整句，如"什么是二叉树"分出
+            # ['什么','是','二叉树']，而图中节点叫"二叉搜索树"），降级用朴素
+            # 2-gram 片段再试一轮："二叉树" → "二叉" 仍可 CONTAINS 命中。
+            tried = set(self._extract_search_terms(query))
+            for term in _naive_tokenize(query):
+                if len(term) < 2 or term in tried:
+                    continue
+                try:
+                    term_kps = await self._kp_repo.search_by_name(term)
+                except Exception:
+                    continue
+                for kp in term_kps:
+                    if kp.id not in seen_ids:
+                        seen_ids.add(kp.id)
+                        kps.append(kp)
         results: list[RAGResult] = []
         for kp in kps[:top_k]:
             results.append(
@@ -212,7 +330,7 @@ class RAGRetrievalService:
                     source_type="neo4j",
                     source_id=kp.id,
                     source_name=kp.name,
-                    score=1.0,
+                    score=self._neo4j_keyword_score(query, kp.name),
                     metadata={
                         "difficulty": kp.difficulty,
                         "category": kp.category,
@@ -247,21 +365,7 @@ class RAGRetrievalService:
 
         if not kps:
             # Tokenize the query and search by each content-bearing token
-            search_terms: list[str] = []
-            try:
-                import jieba as _jieba
-                for word in _jieba.cut(query, cut_all=False):
-                    w = word.strip().lower()
-                    if len(w) >= 2:
-                        search_terms.append(w)
-            except ImportError:
-                # Fallback: split on common Chinese delimiters
-                import re as _re
-                for part in _re.split(r'[的 了 是 在 有 和 或 与 及 之 吗 呢 什么 怎么 如何 为 对 从 向 与 并 而 且 到 ]+', query):
-                    if len(part.strip()) >= 2:
-                        search_terms.append(part.strip())
-
-            for term in search_terms:
+            for term in self._extract_search_terms(query):
                 try:
                     term_kps = await self._kp_repo.search_by_name(term)
                     kps.extend(term_kps)
@@ -346,18 +450,91 @@ class RAGRetrievalService:
         logger.debug("Query expanded (%d extra terms): '%s' -> '%s'", len(extra_terms), query, expanded)
         return expanded
 
-    @staticmethod
+    @classmethod
     def _merge_and_rank(
-        results: list[RAGResult], query: str
+        cls,
+        results: list[RAGResult],
+        query: str,
+        *,
+        method: str | None = None,
+        k: int = 60,
     ) -> list[RAGResult]:
-        """Merge, deduplicate by source_id, and rank by score descending."""
-        seen: set[str] = set()
-        deduped: list[RAGResult] = []
+        """Merge, deduplicate, and rank across heterogeneous sources.
 
-        for r in sorted(results, key=lambda x: x.score, reverse=True):
-            key = f"{r.source_type}:{r.source_id}"
-            if key not in seen:
-                seen.add(key)
-                deduped.append(r)
+        ``method`` 决定融合策略（None 时取 ``cls.default_fusion_method``）：
+          - "score"  : 各自源内保留最高分；按 score 降序（旧行为，用于回退/对照）
+          - "minmax" : 各自源内 min-max 归一化到 [0,1] 后再统一排序
+          - "rrf"    : Reciprocal Rank Fusion，score = Σ 1/(k+rank)，只看顺序
 
-        return deduped
+        所有策略均按 ``(source_type, source_id)`` 去重并保留原始 RAGResult 的副本。
+        """
+        if not results:
+            return []
+        method = (method or cls.default_fusion_method).lower()
+        if method == "score":
+            return cls._merge_score(results)
+        if method == "minmax":
+            return cls._merge_minmax(results)
+        # default: RRF
+        return cls._merge_rrf(results, k=k)
+
+    @classmethod
+    def _merge_score(cls, results: list[RAGResult]) -> list[RAGResult]:
+        """按 (source_type, source_id) 去重保留各源最高分，按 score 降序排序。"""
+        best: dict[tuple[str, str], RAGResult] = {}
+        for r in results:
+            key = (r.source_type, r.source_id)
+            prev = best.get(key)
+            if prev is None or r.score > prev.score:
+                best[key] = r
+        return sorted(best.values(), key=lambda x: x.score, reverse=True)
+
+    @classmethod
+    def _merge_minmax(cls, results: list[RAGResult]) -> list[RAGResult]:
+        """各自源内 min-max 归一化到 [0,1] 后再统一排序（保留原始 RAGResult 元数据）。
+
+        全零源（所有 score 相等）取 0.5 中位分；仅一个元素的源直接保留。
+        """
+        by_source: dict[str, list[RAGResult]] = {}
+        for r in results:
+            by_source.setdefault(r.source_type, []).append(r)
+
+        normalised: list[RAGResult] = []
+        for group in by_source.values():
+            scores = [r.score for r in group]
+            lo, hi = min(scores), max(scores)
+            for r in group:
+                if hi == lo:
+                    ns = 0.5
+                else:
+                    ns = (r.score - lo) / (hi - lo)
+                normalised.append(r.model_copy(update={"score": ns}))
+        return cls._merge_score(normalised)
+
+    @classmethod
+    def _merge_rrf(cls, results: list[RAGResult], *, k: int = 60) -> list[RAGResult]:
+        """Reciprocal Rank Fusion：每个 source_type 单独按 score 排序后取名次。
+
+        同一文档若来自多源，RRF 分累加；最终按 rrf_score 降序输出。
+        """
+        by_source: dict[str, list[RAGResult]] = {}
+        for r in results:
+            by_source.setdefault(r.source_type, []).append(r)
+
+        rrf_scores: dict[tuple[str, str], float] = {}
+        chosen: dict[tuple[str, str], RAGResult] = {}
+        for group in by_source.values():
+            for rank, r in enumerate(
+                sorted(group, key=lambda x: x.score, reverse=True), start=1
+            ):
+                key = (r.source_type, r.source_id)
+                rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (k + rank)
+                prev = chosen.get(key)
+                if prev is None or r.score > prev.score:
+                    chosen[key] = r
+
+        out: list[RAGResult] = []
+        for key, r in chosen.items():
+            out.append(r.model_copy(update={"score": rrf_scores[key]}))
+        out.sort(key=lambda x: x.score, reverse=True)
+        return out

@@ -184,6 +184,8 @@ def _create_test_app(**overrides) -> FastAPI:
     path_service.get_content_type_suggestion = MagicMock(
         return_value=MagicMock(kp_id="kp-test", content_types=["explanation"])
     )
+    path_service.save_recommendation = AsyncMock()
+    path_service.get_recommendation_history = AsyncMock(return_value=[])
 
     forgetting_service = AsyncMock()
     forgetting_service.predict_recall = AsyncMock(return_value=0.5)
@@ -192,10 +194,24 @@ def _create_test_app(**overrides) -> FastAPI:
     ))
     forgetting_service.get_alerts = AsyncMock(return_value=[])
     forgetting_service.get_all_states = AsyncMock(return_value=[])
+    forgetting_service.get_recall_map = AsyncMock(return_value={})
+    forgetting_service.update_after_quiz = AsyncMock(return_value=ForgettingState(
+        kp_id="kp-test", user_id="test-user",
+    ))
 
     anti_gaming_service = AsyncMock()
+    # 必须与 AntiGamingService.calculate_weighted_score 的真实返回结构一致，
+    # 否则 progress 端点会在取 weighted_score 时 KeyError 并静默降级。
     anti_gaming_service.calculate_weighted_score = AsyncMock(return_value={
-        "score": 0.8, "details": {},
+        "raw_score": 0.9,
+        "weighted_score": 0.75,
+        "factors": {
+            "mastery_factor": 0.95,
+            "cram_factor": 0.8,
+            "difficulty_factor": 1.0,
+        },
+        "is_cramming": False,
+        "details": {},
     })
     anti_gaming_service.get_state = AsyncMock(return_value={
         "mastery": 0.7, "cramming_score": 0.0,
