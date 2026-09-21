@@ -27,17 +27,45 @@ def _make_result(
 class TestMergeAndRank:
     """_merge_and_rank — dedup + sorting logic."""
 
-    def test_dedup_by_composite_key(self) -> None:
-        """Duplicate source_type:source_id pairs are removed, highest score wins."""
-        a1 = _make_result("kp-1", "chroma", score=0.9)
-        a2 = _make_result("kp-1", "chroma", score=0.5)  # same composite key
-        b = _make_result("kp-1", "neo4j", score=0.7)  # different source_type
+    def test_dedup_by_source_id_across_sources(self) -> None:
+        """One document retrieved by both legs collapses to a single entry.
 
-        merged = RAGRetrievalService._merge_and_rank([a1, a2, b], "test", method="score")
-        assert len(merged) == 2
-        # a1 should win over a2 (higher score)
-        assert merged[0].source_type == "chroma"
+        ``source_id`` is the document identity; ``source_type`` is only
+        provenance.  The same knowledge point arriving from Chroma (vector)
+        and Neo4j (keyword) must NOT be counted twice — that used to leak
+        duplicates into results and made recall@k exceed 1.0.
+        """
+        chroma_hit = _make_result("kp-1", "chroma", score=0.9)
+        chroma_lower = _make_result("kp-1", "chroma", score=0.5)
+        neo4j_hit = _make_result("kp-1", "neo4j", score=0.7)
+
+        merged = RAGRetrievalService._merge_and_rank(
+            [chroma_hit, chroma_lower, neo4j_hit], "test", method="score"
+        )
+        assert len(merged) == 1
+        assert merged[0].source_id == "kp-1"
+        # Highest score wins regardless of which leg produced it.
         assert merged[0].score == 0.9
+        assert merged[0].source_type == "chroma"
+
+    def test_rrf_accumulates_across_sources(self) -> None:
+        """A document hit by BOTH legs outranks one hit by only one leg.
+
+        This is the documented behaviour of RRF (``Σ 1/(k+rank)`` over
+        sources) and it only works if results are grouped by ``source_id``.
+        """
+        # kp-both is retrieved by chroma (rank 1) and neo4j (rank 1);
+        # kp-vector-only only by chroma (rank 2) — but with a higher raw score.
+        both_chroma = _make_result("kp-both", "chroma", score=0.5)
+        both_neo4j = _make_result("kp-both", "neo4j", score=0.9)
+        vector_only = _make_result("kp-vector-only", "chroma", score=0.99)
+
+        merged = RAGRetrievalService._merge_and_rank(
+            [both_chroma, both_neo4j, vector_only], "test", method="rrf", k=60
+        )
+        ids = [r.source_id for r in merged]
+        assert len(ids) == len(set(ids)), f"duplicates leaked: {ids}"
+        assert ids[0] == "kp-both", f"two-leg hit should win, got {ids}"
 
     def test_sorted_by_score_desc(self) -> None:
         """Results are sorted by score descending."""
@@ -348,3 +376,152 @@ class TestNeo4jSearchTermFallback:
 
         assert [r.source_id for r in results] == ["kp-bst"]
         assert "二叉" in calls  # 2-gram 兜底确实被触发
+
+
+class TestSearchResultCache:
+    """The retrieval-result TTL cache on RAGRetrievalService.search()."""
+
+    async def test_cache_hit_avoids_second_retrieval(self) -> None:
+        from unittest.mock import AsyncMock
+
+        svc = RAGRetrievalService()
+        svc._vector_index = object()  # enables the vector leg
+        svc.enable_result_cache(maxsize=8, ttl_seconds=300.0)
+        calls = {"n": 0}
+
+        async def fake_chroma(query, top_k):
+            calls["n"] += 1
+            return [_make_result("kp-1", "chroma", score=0.9)]
+
+        svc._chroma_search = fake_chroma  # type: ignore[assignment]
+
+        first = await svc.search("什么是时间复杂度", top_k=5)
+        second = await svc.search("什么是时间复杂度", top_k=5)
+
+        assert calls["n"] == 1, "second identical query must be served from cache"
+        assert [r.source_id for r in first] == [r.source_id for r in second]
+
+    async def test_cache_returns_copies_not_shared_objects(self) -> None:
+        """A caller mutating its result must not poison the cached entry."""
+        svc = RAGRetrievalService()
+        svc._vector_index = object()  # enables the vector leg
+        svc.enable_result_cache(maxsize=8, ttl_seconds=300.0)
+
+        async def fake_chroma(query, top_k):
+            return [_make_result("kp-1", "chroma", score=0.9)]
+
+        svc._chroma_search = fake_chroma  # type: ignore[assignment]
+
+        warm = await svc.search("什么是栈", top_k=5)   # populates cache
+        original_score = warm[0].score
+        warm[0].score = -123.0  # caller mutates the object it was handed
+        second = await svc.search("什么是栈", top_k=5)  # served from cache
+        assert second[0].score == original_score, (
+            "cached entry must not be mutated by callers"
+        )
+
+    async def test_use_cache_false_bypasses_cache(self) -> None:
+        svc = RAGRetrievalService()
+        svc._vector_index = object()  # enables the vector leg
+        svc.enable_result_cache(maxsize=8, ttl_seconds=300.0)
+        calls = {"n": 0}
+
+        async def fake_chroma(query, top_k):
+            calls["n"] += 1
+            return [_make_result("kp-1", "chroma", score=0.9)]
+
+        svc._chroma_search = fake_chroma  # type: ignore[assignment]
+
+        await svc.search("什么是队列", top_k=5, use_cache=False)
+        await svc.search("什么是队列", top_k=5, use_cache=False)
+        assert calls["n"] == 2, "use_cache=False must re-run retrieval every time"
+
+    async def test_cache_is_keyed_on_top_k(self) -> None:
+        """Different top_k values must not share a cache entry."""
+        svc = RAGRetrievalService()
+        svc._vector_index = object()  # enables the vector leg
+        svc.enable_result_cache(maxsize=8, ttl_seconds=300.0)
+        calls: list[int] = []
+
+        async def fake_chroma(query, top_k):
+            calls.append(top_k)
+            return [_make_result(f"kp-{top_k}", "chroma", score=0.9)]
+
+        svc._chroma_search = fake_chroma  # type: ignore[assignment]
+
+        await svc.search("什么是图", top_k=3)
+        await svc.search("什么是图", top_k=5)
+        assert calls == [3, 5]
+
+    async def test_no_cache_configured_still_works(self) -> None:
+        """Default service (cache disabled) must behave exactly as before."""
+        svc = RAGRetrievalService()
+        svc._vector_index = object()  # enables the vector leg
+        calls = {"n": 0}
+
+        async def fake_chroma(query, top_k):
+            calls["n"] += 1
+            return [_make_result("kp-1", "chroma", score=0.9)]
+
+        svc._chroma_search = fake_chroma  # type: ignore[assignment]
+        await svc.search("什么是树", top_k=5)
+        await svc.search("什么是树", top_k=5)
+        assert calls["n"] == 2
+
+
+class TestSearchQueryRewrite:
+    """LLM rewrite integration in search() — vector leg only."""
+
+    async def test_rewrite_applies_to_vector_leg_only(self) -> None:
+        from unittest.mock import AsyncMock
+
+        svc = RAGRetrievalService()
+        svc._vector_index = object()  # enables the vector leg
+        svc._kp_repo = object()       # enables the KG leg
+        svc._rewrite_enabled = True
+        svc._rewriter = AsyncMock()
+        svc._rewriter.rewrite = AsyncMock(return_value="数组 链表 区别 插入复杂度")
+
+        seen: dict[str, str] = {}
+
+        async def fake_chroma(query, top_k):
+            seen["chroma"] = query
+            return [_make_result("kp-1", "chroma", score=0.9)]
+
+        async def fake_neo4j(query, top_k):
+            seen["neo4j"] = query
+            return []
+
+        svc._chroma_search = fake_chroma  # type: ignore[assignment]
+        svc._neo4j_search = fake_neo4j  # type: ignore[assignment]
+
+        await svc.search("它和上一个有什么区别？", top_k=5)
+
+        assert seen["chroma"] == "数组 链表 区别 插入复杂度", "vector leg uses rewrite"
+        assert seen["neo4j"] == "它和上一个有什么区别？", "KG leg keeps the original query"
+
+    async def test_rewrite_failure_falls_back_to_original(self) -> None:
+        from unittest.mock import AsyncMock
+
+        svc = RAGRetrievalService()
+        svc._vector_index = object()  # enables the vector leg
+        svc._rewrite_enabled = True
+        svc._rewriter = AsyncMock()
+        svc._rewriter.rewrite = AsyncMock(side_effect=RuntimeError("boom"))
+
+        seen: dict[str, str] = {}
+
+        async def fake_chroma(query, top_k):
+            seen["chroma"] = query
+            return []
+
+        svc._chroma_search = fake_chroma  # type: ignore[assignment]
+
+        await svc.search("什么是红黑树", top_k=5)
+        assert seen["chroma"] == "什么是红黑树"
+
+    async def test_rewrite_disabled_by_default(self) -> None:
+        svc = RAGRetrievalService()
+        svc._vector_index = object()  # enables the vector leg
+        assert svc._rewrite_enabled is False
+        assert svc._rewriter is None

@@ -1,6 +1,10 @@
 # 亮点六：工具调用 + 结构化输出双模式
 
 > **核心数字**：解析成功率 85%→98%+｜出题率 88%→97%｜接入新供应商零代码改动｜工具调用 P95 ~30ms
+>
+> **⚠️ 审计修正（重要）**：本文早期版本描述的工具层**实际上从未被执行过**。审计发现工具链路存在 **4 个叠加缺陷**，导致"Agent 可调用工具"是一个**不成立的主张**：① `BaseAgent` 从未继承 `ToolInjectionMixin`（只有 Mentor 显式列了它，掩盖了其余 Agent 全都缺方法的事实）；② `_handle_tool_calls` 从未被任何 `run()` 调用；③ 该方法内的 `registry.execute()` **漏了 `await`**，工具从不执行、返回值是不可序列化的 coroutine；④ 工具注册时**没传依赖**（`KGTool()` 而非 `KGTool(kp_repo=...)`）。已全部修复并**实测验证**，见 §4.1。
+>
+> 另：文中"工具调用 P95 ~30ms"为设计期估算；实测单次 `knowledge_graph_search` 约 **8–12ms**（见 §4.1）。
 
 ## 1. 背景阐述
 
@@ -79,6 +83,40 @@ class OutputSchema:
 - **多供应商兼容**：接入一个新的 OpenAI 兼容供应商，从"要改 Agent 代码"变为"**改一行适配器配置**"，工具和结构化输出模块零改动
 - **工具调用开销**：工具解析 + 执行（图谱查询）整体 P95 约 **30ms**，对 LLM 秒级响应无感；prompt 块注入增加的 token 约 100-200，可忽略
 - **可测试性**：整个工具/结构化模块用 Mock LLM 覆盖了 **55 项工具测试 + 58 项 Harness 测试**，CI 里每次都跑，回归风险大幅下降
+
+### 4.1 工具链修复与实测（2026-09 审计）
+
+上面那些数字（85%→98%、P95 30ms）是**设计期**结论，但它们建立在"工具层可运行"这个前提上——而审计发现这个前提**当时并不成立**。四个缺陷叠加，任何一个都足以让工具调用完全失效：
+
+| # | 缺陷 | 症状 | 修复 |
+|---|---|---|---|
+| 1 | `BaseAgent(ABC)` **未继承** `ToolInjectionMixin` | 所有 Agent 都没有 `_handle_tool_calls` 方法（只有 Mentor 显式列了 mixin，所以看起来像"Mentor 专属"而非"整体失效"） | `BaseAgent(ToolInjectionMixin, MemoryAwareMixin, ABC)`，并把 Mentor 冗余的基类去掉（否则 MRO 冲突） |
+| 2 | `_handle_tool_calls` **从未被调用** | 工具链整条不可达 | Planner 增加工具轮次，并在 `BaseAgent.execute` 把结果转存到 `report.tool_calls` |
+| 3 | `registry.execute()` **漏了 `await`** | 工具从不执行；返回值是 coroutine，**不可 JSON 序列化**（这正是当年返回值被丢弃的原因） | 补 `await`；结果改为 JSON-safe 结构（含 `duration_ms`） |
+| 4 | 工具注册**没传依赖**（`KGTool()`） | 即便调用成功也只会返回"依赖不可用" | 依赖就绪后再注册，3 个工具全部带真实依赖 |
+
+**可复现证据（缺陷 3）**：未修复版本会同时产生
+`RuntimeWarning: coroutine 'ToolRegistry.execute' was never awaited` 与
+`TypeError: Object of type coroutine is not JSON serializable`，且工具调用计数为 **0**。回归测试用 `-W error::RuntimeWarning` 跑，谁再把 `await` 拿掉就直接红。
+
+**修复后的实测**（真实 DeepSeek + 真实 Neo4j，`planner_node` 直调）：
+
+```
+planner._report.tool_calls = [{
+  "tool": "knowledge_graph_search",
+  "args": {"query": "二分查找", "max_results": 8},
+  "success": true,
+  "output": "找到 1 个相关知识点：\n\n1. 二分查找\n   难度: 2/5 | 分类: algorithm\n   前置知识: 无",
+  "error": null,
+  "duration_ms": 10.94
+}]
+```
+
+也就是说工具**真的查到了图谱数据**（10.94ms），且遥测能被 `GET /api/v1/orchestrator/status/{session_id}` 读到、经 SSE `agent_complete` 推给前端可展开 trace 面板。
+
+**顺带修的两个真 bug**：
+- **遥测路径写错**：planner 节点把 `_report` 写成了 `planner` 的**兄弟键**而非子键，于是被后续 Agent 覆盖、`agent_results.planner._report` 永远读不到（content_auditor/assessment 本来是对的）；同时运行中写盘用浅合并把 `agent_results` 覆盖成占位符，刷新后进度数据被"掏空"。
+- **截断 JSON 拖垮整条管线**：`max_tokens=2048` 下模型回复被截断在对象中间（如 `..., "key_conce`）→ `JSONDecodeError` → planner 失败 → **整次生成失败**。新增 `OutputSchema._repair_truncated`：扫描字符串/括号状态，回退到最后一个完整值并补齐闭合符，把已完成的前几条 knowledge unit **抢救回来**；同时给注入 planner prompt 的工具结果加了 600 字上限，避免工具轮次把回复推得更长。
 
 ## 5. 复盘总结
 

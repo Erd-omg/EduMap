@@ -23,6 +23,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Cap on how much tool output is folded back into the planner prompt.  The
+# structured call is capped at 2048 output tokens; injecting a large tool
+# result makes the JSON response liable to be truncated mid-object.
+_MAX_TOOL_CONTEXT = 600
+
 
 class _PlannerLLMOutput(BaseModel):
     """Schema matching what the LLM returns for planner/v1-extract."""
@@ -54,9 +59,29 @@ class PlannerAgent(BaseAgent):
 
         Uses structured output (``generate_structured``) which tries
         function-calling first, then falls back to prompt-injected JSON.
+
+        Before the structured extraction we offer the tool block to the LLM and
+        execute any ``!tool:name(...)`` calls it emits, then feed the results
+        back in.  Tools let the planner consult the knowledge graph for the
+        task at hand instead of guessing knowledge-unit ids.
         """
         llm = self._get_llm()
         prompt = PromptRegistry.get("planner/v1-extract", task_input=input.task_input)
+
+        # ── Tool round (best-effort) ────────────────────────────────────
+        # Only runs when tools are enabled and a registry is wired in.  Any
+        # failure degrades to "no tool context" rather than failing the plan.
+        #
+        # The injected context is deliberately small (see ``_MAX_TOOL_CONTEXT``):
+        # the planner's structured call is capped at 2048 output tokens, and a
+        # larger prompt makes the model's JSON response more likely to be
+        # truncated mid-object, which fails the whole plan.
+        self._last_tool_calls = []
+        tool_block = self._build_tool_prompt_block()
+        if tool_block:
+            tool_context = await self._gather_tool_context(llm, prompt, tool_block)
+            if tool_context:
+                prompt = f"{prompt}\n\n### 工具查询结果\n{tool_context}"
 
         # Use structured output — no more regex parsing
         result = await llm.generate_structured(
@@ -83,6 +108,40 @@ class PlannerAgent(BaseAgent):
         summary = result.summary or input.task_input[:120]
 
         return PlannerOutput(plan=plan, summary=summary)
+
+    async def _gather_tool_context(self, llm, prompt: str, tool_block: str) -> str:
+        """Ask the LLM whether it wants a tool, run it, and summarise results.
+
+        Returns a short text block to append to the planner prompt, or an empty
+        string when the model asked for no tools (the common case).  Failures
+        are swallowed: tool context is an enhancement, not a dependency.
+
+        Note this uses plain ``generate`` (not ``generate_structured``) because
+        the model must be free to emit ``!tool:`` syntax rather than JSON.
+        """
+        try:
+            response = await llm.generate(
+                f"{prompt}\n\n{tool_block}",
+                system_prompt=(
+                    "你可以先调用工具补充信息。若需要，只输出一行 "
+                    "`!tool:工具名(参数=值)`；若不需要工具，直接输出 `无需工具`。"
+                ),
+            )
+            calls = await self._handle_tool_calls(response.content)
+            self._last_tool_calls = calls
+            if not calls:
+                return ""
+            lines = [
+                f"- {c['tool']}({c['args']}) → "
+                + (c["output"] if c["success"] else f"失败: {c['error']}")
+                for c in calls
+            ]
+            logger.info("Planner used %d tool call(s)", len(calls))
+            context = "\n".join(lines)[:_MAX_TOOL_CONTEXT]
+            return context
+        except Exception as exc:
+            logger.warning("Planner tool round failed (continuing without): %s", exc)
+            return ""
 
     # ── Legacy compatibility ────────────────────────────────────────
 

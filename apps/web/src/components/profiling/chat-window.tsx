@@ -8,6 +8,7 @@ import { ChatMessage } from './chat-message';
 import { ChatInput } from './chat-input';
 import { HistoryDrawer } from './history-drawer';
 import { ProfileCard } from './profile-card';
+import { IntentBadge } from './intent-badge';
 import { SourcePanel } from '@/components/mentor/source-panel';
 import { Badge, Card, CardContent } from '@/components/ui';
 import type { UserProfile } from '@edumap/shared-types';
@@ -78,6 +79,7 @@ export function ChatWindow() {
       streamingRef.current = '';
       lastSentTextRef.current = text;
       completedRef.current = false;
+      store.setIntent(null);
 
       const userMsg = {
         id: `user-${Date.now()}`,
@@ -95,6 +97,24 @@ export function ChatWindow() {
       const url = `${API_BASE}/api/v1/analysis/stream/${getUserId()}?message=${encodeURIComponent(text)}`;
       const es = new EventSource(url);
       eventSourceRef.current = es;
+
+      // Intent classification arrives first — drives the response routing
+      // (profile analysis / mentor answer / both) and powers the trace badge.
+      es.addEventListener('intent', (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.intent && typeof data.intent === 'string') {
+            store.setIntent({
+              intent: data.intent,
+              confidence: typeof data.confidence === 'number' ? data.confidence : 0,
+              path: data.path ?? 'unknown',
+              votes: data.votes,
+            });
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      });
 
       es.addEventListener('token', (event: MessageEvent) => {
         try {
@@ -236,6 +256,9 @@ export function ChatWindow() {
                     ? '连接错误'
                     : '就绪'}
               </span>
+              {store.isStreaming && store.lastIntent && (
+                <IntentBadge intent={store.lastIntent} />
+              )}
             </div>
             <button
               onClick={() => {
@@ -277,6 +300,7 @@ export function ChatWindow() {
                       type: 'ai_text',
                       content: store.streamingContent,
                       timestamp: Date.now(),
+                      intent: store.lastIntent ?? undefined,
                     }}
                     isStreaming
                   />

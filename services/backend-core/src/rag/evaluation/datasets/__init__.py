@@ -94,3 +94,35 @@ def load_queries_by_difficulty(
     """
     all_queries = load_expanded_queries()
     return [q for q in all_queries if q.get("difficulty") == difficulty]
+
+
+def load_intent_labeled() -> list[dict[str, Any]]:
+    """Load the hand-labeled intent-classification evaluation set.
+
+    Unlike the retrieval datasets, these rows carry a ``label`` from the
+    intent space (``profile`` / ``question`` / ``mixed``) rather than a set
+    of relevant knowledge-point ids.
+
+    Returns:
+        List of dicts with keys ``text``, ``label``, ``difficulty``, ``note``.
+        Returns an empty list (with a warning) if the file is missing.
+    """
+    path = _DATASETS_DIR / "intent_labeled.json"
+    if not path.exists():
+        logger.warning("Intent dataset not found: %s", path)
+        return []
+
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    rows = [
+        {
+            "text": q["text"],
+            "label": q["label"],
+            "difficulty": q.get("difficulty", "basic"),
+            "note": q.get("note", ""),
+        }
+        for q in data.get("queries", [])
+    ]
+    logger.info("Loaded %d labeled intent queries from %s", len(rows), path.name)
+    return rows

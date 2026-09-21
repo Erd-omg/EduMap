@@ -7,6 +7,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from src.rag.models import RAGContext, RAGResult, SourceType
+from src.utils.ttl_cache import TTLLRUCache
 
 if TYPE_CHECKING:
     from src.kg.repositories.knowledge_point_repo import KnowledgePointRepository
@@ -64,6 +65,11 @@ class RAGRetrievalService:
         self._reranker: Any = None  # Set by main.py when reranker is enabled
         self._expand_query_enabled: bool = False  # Set externally
         self._expand_query_max_terms: int = 5     # Set externally
+        # LLM query rewrite (set externally; default off — see main.py wiring).
+        self._rewriter: Any = None
+        self._rewrite_enabled: bool = False
+        # Retrieval-result TTL cache. Bypass with search(..., use_cache=False).
+        self._result_cache: TTLLRUCache[str, list[RAGResult]] | None = None
         # Hybrid fusion strategy: "rrf" (default) | "minmax" | "score"
         self.fusion_method: str = self.default_fusion_method
         self.fusion_k: int = 60  # RRF 常数
@@ -71,18 +77,57 @@ class RAGRetrievalService:
     # 默认融合策略（子类或 main.py 可覆盖；亦可由 Settings.hybrid_fusion_method 注入）
     default_fusion_method: str = "rrf"
 
-    async def search(self, query: str, top_k: int = 5) -> list[RAGResult]:
-        """Run hybrid search across vector index and KG, with optional reranking."""
+    def enable_result_cache(self, maxsize: int = 256, ttl_seconds: float = 300.0) -> None:
+        """Turn on memoisation of search results keyed on the normalised query."""
+        self._result_cache = TTLLRUCache(maxsize=maxsize, ttl_seconds=ttl_seconds)
+
+    @staticmethod
+    def _cache_key(query: str, top_k: int) -> str:
+        return f"{top_k}:{' '.join(query.split()).lower()}"
+
+    async def search(
+        self, query: str, top_k: int = 5, use_cache: bool = True
+    ) -> list[RAGResult]:
+        """Run hybrid search across vector index and KG, with optional reranking.
+
+        Args:
+            query: The user's query.
+            top_k: Number of results to return.
+            use_cache: When False, skip (and do not populate) the result cache.
+                Evaluation harnesses pass False so repeated runs stay honest.
+        """
+        if self._result_cache is not None and use_cache:
+            cache_key = self._cache_key(query, top_k)
+            cached = self._result_cache.get(cache_key)
+            if cached is not None:
+                # Return copies: RAGResult is a mutable pydantic model and
+                # downstream code (reranker, context assembly) may set fields.
+                return [r.model_copy() for r in cached]
+        else:
+            cache_key = ""
+
         # Fetch more candidates when reranker is available
         candidate_k = top_k * 3 if self._reranker is not None else top_k
 
         results: list[RAGResult] = []
 
+        # ── -1. LLM query rewrite (vector leg only) ─────────────────────────
+        # Only the vector query is rewritten.  Neo4j keyword search matches on
+        # exact names, so it keeps the user's real words — mirroring the KG
+        # expansion policy below.  Any failure falls back to the original.
+        vector_query = query
+        if self._rewrite_enabled and self._rewriter is not None:
+            try:
+                vector_query = await self._rewriter.rewrite(query)
+            except Exception as exc:
+                logger.warning("Query rewrite failed, using original: %s", exc)
+                vector_query = query
+
         # ── 0. KG-based query expansion (for ChromaDB only) ─────────────────
-        chroma_query = query
+        chroma_query = vector_query
         if self._expand_query_enabled and self._kp_repo is not None:
             try:
-                chroma_query = await self._expand_query_with_kg(query)
+                chroma_query = await self._expand_query_with_kg(vector_query)
             except Exception as exc:
                 logger.warning("Query expansion failed, using original: %s", exc)
 
@@ -108,15 +153,19 @@ class RAGRetrievalService:
         )
 
         # ── 4. Cross-encoder reranking (if available) ────────────────────
+        final: list[RAGResult] = merged[:top_k]
         if self._reranker is not None and len(merged) > top_k:
             try:
-                reranked = await self._reranker.rerank(chroma_query, merged, top_k=top_k)
-                logger.debug("Reranked %d -> %d results", len(merged), len(reranked))
-                return reranked
+                final = await self._reranker.rerank(chroma_query, merged, top_k=top_k)
+                logger.debug("Reranked %d -> %d results", len(merged), len(final))
             except Exception as exc:
                 logger.warning("Reranking failed, using original scores: %s", exc)
+                final = merged[:top_k]
 
-        return merged[:top_k]
+        if self._result_cache is not None and use_cache and cache_key:
+            self._result_cache.put(cache_key, [r.model_copy() for r in final])
+
+        return final
 
     async def assemble_context(
         self, results: list[RAGResult], max_chars: int = 2000
@@ -466,7 +515,14 @@ class RAGRetrievalService:
           - "minmax" : 各自源内 min-max 归一化到 [0,1] 后再统一排序
           - "rrf"    : Reciprocal Rank Fusion，score = Σ 1/(k+rank)，只看顺序
 
-        所有策略均按 ``(source_type, source_id)`` 去重并保留原始 RAGResult 的副本。
+        所有策略均按 **``source_id``**（文档身份）去重，``source_type`` 仅作为
+        「来自哪一路召回」的溯源标记保留在结果上。
+
+        为什么不能按 ``(source_type, source_id)`` 去重：同一个知识点会同时被
+        ChromaDB（向量）和 Neo4j（关键字）两路召回，两路给它的 ``source_id``
+        相同但 ``source_type`` 不同。按二元组去重会把**同一篇文档当成两篇**，
+        结果是结果列表里出现重复项，且 recall@k 会算出 > 1 的非法值；
+        RRF 期望的「同一文档多源得分累加」也永远不会发生。
         """
         if not results:
             return []
@@ -480,13 +536,12 @@ class RAGRetrievalService:
 
     @classmethod
     def _merge_score(cls, results: list[RAGResult]) -> list[RAGResult]:
-        """按 (source_type, source_id) 去重保留各源最高分，按 score 降序排序。"""
-        best: dict[tuple[str, str], RAGResult] = {}
+        """按 ``source_id`` 去重保留各源最高分，按 score 降序排序。"""
+        best: dict[str, RAGResult] = {}
         for r in results:
-            key = (r.source_type, r.source_id)
-            prev = best.get(key)
+            prev = best.get(r.source_id)
             if prev is None or r.score > prev.score:
-                best[key] = r
+                best[r.source_id] = r
         return sorted(best.values(), key=lambda x: x.score, reverse=True)
 
     @classmethod
@@ -515,23 +570,26 @@ class RAGRetrievalService:
     def _merge_rrf(cls, results: list[RAGResult], *, k: int = 60) -> list[RAGResult]:
         """Reciprocal Rank Fusion：每个 source_type 单独按 score 排序后取名次。
 
-        同一文档若来自多源，RRF 分累加；最终按 rrf_score 降序输出。
+        ``score(d) = Σ_sources 1/(k + rank_source(d))``——同一文档若被两路召回，
+        两路的倒数名次分**累加**，因此双路都命中的文档会排在只被单路命中的前面。
+        按 ``source_id`` 聚合，最终按 rrf_score 降序输出。
         """
         by_source: dict[str, list[RAGResult]] = {}
         for r in results:
             by_source.setdefault(r.source_type, []).append(r)
 
-        rrf_scores: dict[tuple[str, str], float] = {}
-        chosen: dict[tuple[str, str], RAGResult] = {}
+        rrf_scores: dict[str, float] = {}
+        chosen: dict[str, RAGResult] = {}
         for group in by_source.values():
             for rank, r in enumerate(
                 sorted(group, key=lambda x: x.score, reverse=True), start=1
             ):
-                key = (r.source_type, r.source_id)
-                rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (k + rank)
-                prev = chosen.get(key)
+                rrf_scores[r.source_id] = (
+                    rrf_scores.get(r.source_id, 0.0) + 1.0 / (k + rank)
+                )
+                prev = chosen.get(r.source_id)
                 if prev is None or r.score > prev.score:
-                    chosen[key] = r
+                    chosen[r.source_id] = r
 
         out: list[RAGResult] = []
         for key, r in chosen.items():

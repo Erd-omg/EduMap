@@ -1,0 +1,357 @@
+{
+  "report_name": "intent_eval",
+  "generated_at": "20260921T042250Z",
+  "config": {
+    "cold": false,
+    "run_id": "be281bc6",
+    "embedding_model": "BAAI/bge-small-zh-v1.5",
+    "llm_model": "spark",
+    "n_rows": 72
+  },
+  "metrics": {
+    "n_queries": 72,
+    "n_correct": 54,
+    "accuracy": 0.75,
+    "confusion": {
+      "profile": {
+        "profile": 9,
+        "question": 1,
+        "mixed": 8
+      },
+      "question": {
+        "profile": 0,
+        "question": 33,
+        "mixed": 3
+      },
+      "mixed": {
+        "profile": 0,
+        "question": 6,
+        "mixed": 12
+      }
+    },
+    "per_class": {
+      "profile": {
+        "precision": 1.0,
+        "recall": 0.5,
+        "f1": 0.6667,
+        "support": 18
+      },
+      "question": {
+        "precision": 0.825,
+        "recall": 0.9167,
+        "f1": 0.8684,
+        "support": 36
+      },
+      "mixed": {
+        "precision": 0.5217,
+        "recall": 0.6667,
+        "f1": 0.5854,
+        "support": 18
+      }
+    },
+    "path_counts": {
+      "rule": 68,
+      "fused": 4
+    },
+    "accuracy_by_path": {
+      "rule": {
+        "n": 68,
+        "correct": 50
+      },
+      "fused": {
+        "n": 4,
+        "correct": 4
+      }
+    },
+    "misclassified": [
+      {
+        "text": "自学数据结构需要什么基础？",
+        "expected": "question",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "【难例】含「自学/基础」但是提问"
+      },
+      {
+        "text": "我对前端很感兴趣，但没系统学过",
+        "expected": "profile",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "兴趣披露"
+      },
+      {
+        "text": "我想学算法应该怎么学？",
+        "expected": "question",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "【难例】含「我想学」但核心是求路径建议，非背景披露"
+      },
+      {
+        "text": "我算法这块一直不太好，是我的弱项",
+        "expected": "profile",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "弱项披露"
+      },
+      {
+        "text": "我只会写 SQL 查询，怎么开始学数据库优化？",
+        "expected": "mixed",
+        "predicted": "question",
+        "confidence": 0.9,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "question",
+            "confidence": 0.9
+          }
+        },
+        "note": "水平+提问"
+      },
+      {
+        "text": "我平时用 Java 比较多，Python 的装饰器是什么原理？",
+        "expected": "mixed",
+        "predicted": "question",
+        "confidence": 0.9,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "question",
+            "confidence": 0.9
+          }
+        },
+        "note": "背景+提问"
+      },
+      {
+        "text": "我英语还行，看文档没什么问题",
+        "expected": "profile",
+        "predicted": "question",
+        "confidence": 0.9,
+        "path": "rule",
+        "has_topic": false,
+        "votes": {
+          "rule": {
+            "intent": "question",
+            "confidence": 0.9
+          }
+        },
+        "note": "能力披露"
+      },
+      {
+        "text": "我的数学基础比较薄弱",
+        "expected": "profile",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "弱点披露"
+      },
+      {
+        "text": "我学完了数组和链表，接下来学树是不是比较好，树有哪些种类？",
+        "expected": "mixed",
+        "predicted": "question",
+        "confidence": 0.9,
+        "path": "rule",
+        "has_topic": false,
+        "votes": {
+          "rule": {
+            "intent": "question",
+            "confidence": 0.9
+          }
+        },
+        "note": "进度+提问"
+      },
+      {
+        "text": "我是跨专业考研的，本科是数学",
+        "expected": "profile",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "背景披露"
+      },
+      {
+        "text": "我准备明年春天找一份后端开发的实习",
+        "expected": "profile",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "目标陈述"
+      },
+      {
+        "text": "我熟悉 Java 后端开发",
+        "expected": "profile",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "技能披露"
+      },
+      {
+        "text": "我学过 Python 和一点数据结构",
+        "expected": "profile",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "背景披露"
+      },
+      {
+        "text": "我数学不好，学机器学习前需要补哪些知识？",
+        "expected": "mixed",
+        "predicted": "question",
+        "confidence": 0.9,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "question",
+            "confidence": 0.9
+          }
+        },
+        "note": "弱项+提问"
+      },
+      {
+        "text": "我今年大三，准备找实习，操作系统这门课的重点是什么？",
+        "expected": "mixed",
+        "predicted": "question",
+        "confidence": 0.9,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "question",
+            "confidence": 0.9
+          }
+        },
+        "note": "背景+提问"
+      },
+      {
+        "text": "我已经学完了 C 语言和基础的数据结构课程",
+        "expected": "profile",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "已完成课程"
+      },
+      {
+        "text": "我想学操作系统，应该按什么顺序？",
+        "expected": "question",
+        "predicted": "mixed",
+        "confidence": 0.7,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.7
+          }
+        },
+        "note": "【难例】含「我想学」，求学习顺序"
+      },
+      {
+        "text": "我对图论完全不熟，最短路径算法该怎么理解？",
+        "expected": "mixed",
+        "predicted": "question",
+        "confidence": 0.9,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "question",
+            "confidence": 0.9
+          }
+        },
+        "note": "背景+提问"
+      }
+    ],
+    "by_difficulty": {
+      "basic": {
+        "n": 42,
+        "correct": 28,
+        "accuracy": 0.6667
+      },
+      "intermediate": {
+        "n": 22,
+        "correct": 18,
+        "accuracy": 0.8182
+      },
+      "advanced": {
+        "n": 8,
+        "correct": 8,
+        "accuracy": 1.0
+      }
+    },
+    "cold": false
+  }
+}

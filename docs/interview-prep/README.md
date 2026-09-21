@@ -27,12 +27,14 @@
 - **Agent 数量口径**：8 个 Agent = 1 编排者（Orchestrator，即 StateGraph 本身，无 LLM）+ 7 执行者；其中 6 个进生成管线（Planner→Guardian→Designer∥Coder→Content Auditor→Assessment），Mentor 是第 7 个执行者但走独立 RAG 链路不进 StateGraph。详见 [01-multi-agent-orchestration.md](01-multi-agent-orchestration.md#0-前置澄清项目里到底有几个agent面试官必问)
 - StateGraph 共 9 个节点 = 6 个 Agent 节点（planner/guardian/designer/coder/content_auditor/assessment）+ 3 个合成节点（merge/retry_prep/assess_degraded，非 Agent）
 - 8 个 Agent 总规模；6 个迁移至 Harness；15 个 Docker 服务
-- 574 项后端 pytest + 前端 Vitest + Playwright E2E；CI 覆盖率门禁 40%
+- 868 项测试（734 后端 pytest + 113 前端 Vitest + 21 沙箱）+ Playwright E2E；CI 覆盖率门禁 40%
 - 3 层记忆：Sensory（请求级）→ Redis 短时（1h TTL，50 轮）→ PG 长时（Episodic + Semantic，召回 10 条）
 - RAG：双路召回（Neo4j + ChromaDB），**Neo4j 关键词打分按匹配质量分档**（exact/prefix/substring/jaccard），融合默认 **RRF**（k=60），可切 `minmax`/`score`；Cross-Encoder 精排 top-5 **已实现但默认关闭**；上下文预算 2000 字符
 - 评测：9 个指标函数，8 项对外指标，n=20 标注冒烟集 + n=200 图谱自动生成集，LLM-judge 限制 3 条/轮
 - **RAG 实测口径**：所有基准报告 `reranker_enabled=false`；n=20 → MRR 0.900 / HR@3 0.950；n=200 → MRR 0.841 / HR@3 0.930 / HR@5 0.960 / P@1 0.755；全管线 P50 19.4ms / P95 54.7ms
-- 工具系统：ToolRegistry + 3 个内置工具（kg_search / resource_search / forgetting_check）
+- 工具系统：ToolRegistry（含超时治理）+ 3 个内置工具（kg_search / resource_search / forgetting_check）；工具调用遥测经 `_report.tool_calls` → SSE → 前端 trace 面板
+- 意图识别：三路融合（规则快路径 + LLM 结构化投票 + embedding few-shot 投票）+ LRU/TTL 缓存；**实测冷启动准确率 93.1%（n=72 标注集），95.8% 请求由规则路径零模型调用解决**
+- 检索策略 A/B（n=200 实测，三策略统一绕过缓存以保证延迟可比）：hybrid MRR 0.8569 / 30.3ms，direct 0.8454 / 33.0ms（延迟 ×0.92）；**LLM query rewrite 为负收益（MRR −0.054、延迟 ×60），已实现但默认关闭**
 - 结构化输出：OutputSchema 双模式（Function Calling / 提示注入），解析鲁棒（剥围栏 + 定位 JSON + Pydantic 校验）
 - 熔断器：连续 5 次失败熔断，恢复窗口 60s；RetryHandler 指数退避（1s/2s/4s），网络类异常才重试
 

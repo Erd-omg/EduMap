@@ -226,19 +226,20 @@ EduMap/
 │   │       ├── evaluator.py          # RAGEvaluator 评测管道
 │   │       ├── benchmark.py          # 基准测试运行器（支持 KG 生成 + 手工标注双数据源）
 │   │       ├── llm_judge.py          # LLM-as-Judge 评测（faithfulness + relevancy）
-│   │       └── datasets/             # 手工标注的学生问答评测数据集（20 条）
-│   │── tests/                         # pytest 自动化测试（575+ 项，含 API 集成测试）
+│   │       └── datasets/             # 评测数据集（20 条手工标注 + 200 条扩展 + 72 条意图标注）
+│   │── tests/                         # pytest 自动化测试（734 项，含 API 集成测试）
 │   │   ├── conftest.py               # 全局 fixtures
 │   │   ├── mocks/                     # MockLLMAdapter
-│   │   ├── test_rag/                  # RAG 评测/分块/重排序测试（110 项）
-│   │   ├── test_harness/              # BaseAgent/Retry/StructuredOutput 测试
+│   │   ├── test_rag/                  # RAG 评测/分块/重排序/策略对比测试（204 项）
+│   │   ├── test_harness/              # BaseAgent/Retry/StructuredOutput 测试（64 项）
 │   │   ├── test_memory/               # 三层记忆系统测试（83 项）
-│   │   ├── test_tools/                # 工具系统测试（55 项）
+│   │   ├── test_tools/                # 工具系统 + 工具调用执行测试（63 项）
 │   │   ├── test_kg/                   # 知识图谱/向量索引/语义去重测试（80 项）
-│   │   ├── test_learning_path/        # 遗忘曲线/路径服务测试（45 项）
-│   │   ├── test_agents/               # Guardian/Orchestrator 测试（50 项）
-│   │   ├── test_utils/                # LLM 熔断器测试（16 项）
-│   │   └── test_api/                  # FastAPI 集成测试（34 项，零 xfail）
+│   │   ├── test_learning_path/        # 遗忘曲线/路径服务测试（50 项）
+│   │   ├── test_agents/               # Guardian/Orchestrator 测试（51 项）
+│   │   ├── test_utils/                # LLM 熔断器/TTL 缓存测试（43 项）
+│   │   ├── test_analysis/             # 三路融合意图识别测试（15 项）
+│   │   └── test_api/                  # FastAPI 集成测试（78 项）
 │   └── sandbox-service/src/         # 代码沙箱服务
 ├── scripts/db/                      # 数据库初始化脚本
 └── docker-compose.yml               # 开发环境编排
@@ -262,7 +263,7 @@ EduMap/
 | 系统 | 角色 | 技术 |
 |------|------|------|
 | **记忆系统** | 三层记忆：Sensory → Short-term (Redis) → Long-term (PostgreSQL) | Redis + asyncpg + Pydantic |
-| **工具系统** | 为 agent 提供可调用工具（KG搜索/资源搜索/遗忘检查） | ToolRegistry + Prompt-injected tool format |
+| **工具系统** | 为 agent 提供可调用工具（KG搜索/资源搜索/遗忘检查） | ToolRegistry（含超时治理）+ `!tool:name(k=v)` 文本协议；工具调用遥测经 SSE 推送到前端 trace 面板 |
 | **分块引擎** | 多策略文档分块（语义/递归/固定） | sentence-transformers + 分离器层级 |
 | **RAG 评测** | 检索质量/生成质量自动化评测管道 | Precision@K / Recall@K / MRR / NDCG / HitRate / Faithfulness (LLM-as-Judge + 词重叠双模式) / Citation Accuracy / Context Coverage |
 | **Agent Harness** | 标准化 Agent 执行层：BaseAgent ABC、结构化输出(双模式)、统一重试、可观测性、Tool/Memory 注入 | `src/harness/` 8 个文件，6 个 Agent 迁移，全部 5 个 graph 节点统一 |
@@ -305,6 +306,43 @@ EduMap/
 - ✅ 纠错内容传递到 LLM 对话历史，改进回答质量
 - ⚠️ 当前架构限制：RAG 检索无状态，反馈不影响检索结果
 - 详情见 `benchmark_results/latest_expanded.json` 和 `benchmark_results/latest_sample.json`
+
+### 检索策略 A/B 对比（direct / hybrid / rewrite）
+
+```bash
+cd services/backend-core
+python3 scripts/run_strategy_comparison.py --dataset expanded \
+    --strategies direct,hybrid,rewrite --output benchmark_results
+```
+
+n=200 扩展集实测（DeepSeek 真实 LLM，重排关闭，**三条策略均绕过检索结果缓存以保证延迟可比**）：
+
+| 策略 | R@5 | P@5 | MRR | NDCG@5 | HR@5 | 平均延迟 |
+|------|-----|-----|-----|--------|------|----------|
+| direct（纯向量） | 0.9000 | 0.254 | 0.8454 | 0.8634 | 0.955 | 33.0 ms |
+| hybrid（向量+KG+RRF） | **0.9054** | **0.255** | **0.8569** | **0.8726** | 0.955 | **30.3 ms** |
+| rewrite（LLM 改写后 hybrid） | 0.9054 | 0.254 | 0.8029 | 0.8275 | 0.95 | 1822.9 ms |
+
+**结论（含一条负面结果）**：
+- hybrid 相对 direct **MRR +0.012、R@5 +0.005，延迟 ×0.92**（略快且更准），因此是生产默认。
+- **LLM query rewrite 是负收益**：200/200 改写全部成功，但 MRR 比 hybrid **低 0.054**、延迟是 hybrid 的 **×60**。原因是评测集查询本身就是教科书式问法，改写反而丢掉了原句语义结构。因此 `rag_rewrite_enabled` **默认关闭**——这是一个如实记录的负结果，未做 prompt 调优以美化数字。
+- **口径修订（重要）**：早期版本曾报告 hybrid 延迟为 direct 的 **×0.64**。复核发现那是因为 `direct` 直接调 `_chroma_search`、而 `hybrid` 走 `search()` 并命中了检索结果缓存——**该延迟优势部分是缓存假象**。现在三条策略统一 `use_cache=False`，公平口径为 **×0.92**。
+
+### 意图识别准确率评测
+
+```bash
+python3 scripts/run_intent_eval.py --no-cache --output benchmark_results
+```
+
+自建 72 条人工标注集（`datasets/intent_labeled.json`，含刻意难例），冷启动实测：
+
+| 版本 | 准确率 | 规则路径占比 | 融合路径准确率 |
+|------|--------|--------------|----------------|
+| 修复前 | 0.7500 (54/72) | 94.4% | 1.0000 |
+| **修复后** | **0.9306 (67/72)** | **95.8%** | 1.0000 |
+
+分类为 profile / question / mixed 三类的每类 F1：0.971 / 0.943 / 0.872。
+**95.8% 的消息由规则快路径以零模型调用解决**，仅 4.2% 升级到 LLM + embedding 融合投票。
 
 ## 许可证
 

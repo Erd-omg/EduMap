@@ -1,0 +1,162 @@
+{
+  "report_name": "intent_eval",
+  "generated_at": "20260921T045655Z",
+  "config": {
+    "cold": true,
+    "run_id": "ff476fd9",
+    "embedding_model": "BAAI/bge-small-zh-v1.5",
+    "llm_model": "spark",
+    "n_rows": 72
+  },
+  "metrics": {
+    "n_queries": 72,
+    "n_correct": 67,
+    "accuracy": 0.9306,
+    "confusion": {
+      "profile": {
+        "profile": 17,
+        "question": 0,
+        "mixed": 1
+      },
+      "question": {
+        "profile": 0,
+        "question": 33,
+        "mixed": 3
+      },
+      "mixed": {
+        "profile": 0,
+        "question": 1,
+        "mixed": 17
+      }
+    },
+    "per_class": {
+      "profile": {
+        "precision": 1.0,
+        "recall": 0.9444,
+        "f1": 0.9714,
+        "support": 18
+      },
+      "question": {
+        "precision": 0.9706,
+        "recall": 0.9167,
+        "f1": 0.9429,
+        "support": 36
+      },
+      "mixed": {
+        "precision": 0.8095,
+        "recall": 0.9444,
+        "f1": 0.8718,
+        "support": 18
+      }
+    },
+    "path_counts": {
+      "rule": 69,
+      "fused": 3
+    },
+    "accuracy_by_path": {
+      "rule": {
+        "n": 69,
+        "correct": 64
+      },
+      "fused": {
+        "n": 3,
+        "correct": 3
+      }
+    },
+    "misclassified": [
+      {
+        "text": "自学数据结构需要什么基础？",
+        "expected": "question",
+        "predicted": "mixed",
+        "confidence": 0.8,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.8
+          }
+        },
+        "note": "【难例】含「自学/基础」但是提问"
+      },
+      {
+        "text": "我想学算法应该怎么学？",
+        "expected": "question",
+        "predicted": "mixed",
+        "confidence": 0.8,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.8
+          }
+        },
+        "note": "【难例】含「我想学」但核心是求路径建议，非背景披露"
+      },
+      {
+        "text": "我英语还行，看文档没什么问题",
+        "expected": "profile",
+        "predicted": "mixed",
+        "confidence": 0.8,
+        "path": "rule",
+        "has_topic": false,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.8
+          }
+        },
+        "note": "能力披露"
+      },
+      {
+        "text": "我学完了数组和链表，接下来学树是不是比较好，树有哪些种类？",
+        "expected": "mixed",
+        "predicted": "question",
+        "confidence": 0.9,
+        "path": "rule",
+        "has_topic": false,
+        "votes": {
+          "rule": {
+            "intent": "question",
+            "confidence": 0.9
+          }
+        },
+        "note": "进度+提问"
+      },
+      {
+        "text": "我想学操作系统，应该按什么顺序？",
+        "expected": "question",
+        "predicted": "mixed",
+        "confidence": 0.8,
+        "path": "rule",
+        "has_topic": true,
+        "votes": {
+          "rule": {
+            "intent": "mixed",
+            "confidence": 0.8
+          }
+        },
+        "note": "【难例】含「我想学」，求学习顺序"
+      }
+    ],
+    "by_difficulty": {
+      "basic": {
+        "n": 42,
+        "correct": 37,
+        "accuracy": 0.881
+      },
+      "intermediate": {
+        "n": 22,
+        "correct": 22,
+        "accuracy": 1.0
+      },
+      "advanced": {
+        "n": 8,
+        "correct": 8,
+        "accuracy": 1.0
+      }
+    },
+    "cold": true
+  }
+}

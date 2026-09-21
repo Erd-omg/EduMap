@@ -1,0 +1,1375 @@
+{
+  "n_queries": 20,
+  "k_values": [
+    1,
+    3,
+    5,
+    10
+  ],
+  "strategies": {
+    "direct": {
+      "name": "direct",
+      "n_queries": 20,
+      "precision": {
+        "1": 0.85,
+        "3": 0.4333,
+        "5": 0.27,
+        "10": 0.14
+      },
+      "recall": {
+        "1": 0.6917,
+        "3": 0.9333,
+        "5": 0.95,
+        "10": 0.975
+      },
+      "ndcg": {
+        "1": 0.85,
+        "3": 0.9162,
+        "5": 0.9146,
+        "10": 0.9296
+      },
+      "hit_rate": {
+        "1": 0.85,
+        "3": 0.95,
+        "5": 0.95,
+        "10": 1.0
+      },
+      "mrr": 0.9056,
+      "avg_latency_ms": 186.08,
+      "n_rewrites_used": 0,
+      "n_rewrites_failed": 0
+    },
+    "hybrid": {
+      "name": "hybrid",
+      "n_queries": 20,
+      "precision": {
+        "1": 0.85,
+        "3": 0.4333,
+        "5": 0.27,
+        "10": 0.14
+      },
+      "recall": {
+        "1": 0.6667,
+        "3": 0.9333,
+        "5": 0.95,
+        "10": 0.975
+      },
+      "ndcg": {
+        "1": 0.85,
+        "3": 0.9051,
+        "5": 0.9034,
+        "10": 0.9185
+      },
+      "hit_rate": {
+        "1": 0.85,
+        "3": 0.95,
+        "5": 0.95,
+        "10": 1.0
+      },
+      "mrr": 0.9056,
+      "avg_latency_ms": 34.47,
+      "n_rewrites_used": 0,
+      "n_rewrites_failed": 0
+    },
+    "rewrite": {
+      "name": "rewrite",
+      "n_queries": 20,
+      "precision": {
+        "1": 0.85,
+        "3": 0.4333,
+        "5": 0.27,
+        "10": 0.14
+      },
+      "recall": {
+        "1": 0.6667,
+        "3": 0.9333,
+        "5": 0.95,
+        "10": 0.975
+      },
+      "ndcg": {
+        "1": 0.85,
+        "3": 0.9051,
+        "5": 0.9034,
+        "10": 0.9185
+      },
+      "hit_rate": {
+        "1": 0.85,
+        "3": 0.95,
+        "5": 0.95,
+        "10": 1.0
+      },
+      "mrr": 0.9056,
+      "avg_latency_ms": 26.97,
+      "n_rewrites_used": 0,
+      "n_rewrites_failed": 20
+    }
+  },
+  "summary": {
+    "best_per_metric": {
+      "recall@5": "direct",
+      "precision@5": "direct",
+      "mrr": "direct",
+      "ndcg@5": "direct",
+      "hit_rate@5": "direct",
+      "latency": "rewrite"
+    },
+    "improvement_vs_direct": {
+      "hybrid": {
+        "recall@5_delta": 0.0,
+        "mrr_delta": 0.0,
+        "latency_x": 0.19
+      },
+      "rewrite": {
+        "recall@5_delta": 0.0,
+        "mrr_delta": 0.0,
+        "latency_x": 0.14
+      }
+    }
+  },
+  "per_query": {
+    "direct": [
+      {
+        "query": "数组和链表有什么区别？在插入操作上哪个更快？",
+        "relevant_ids": [
+          "kp-array",
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-array",
+          "kp-search-kmp",
+          "kp-graph",
+          "kp-string",
+          "kp-sort",
+          "kp-stack",
+          "kp-complexity",
+          "kp-queue",
+          "kp-sort-quick"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "栈和队列的应用场景分别是什么？",
+        "relevant_ids": [
+          "kp-queue",
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-stack",
+          "kp-queue",
+          "kp-recursion",
+          "kp-sort",
+          "kp-sort-bubble",
+          "kp-array",
+          "kp-sort-merge",
+          "kp-sort-selection",
+          "kp-heap",
+          "kp-complexity"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是二叉搜索树？它的查找时间复杂度是多少？",
+        "relevant_ids": [
+          "kp-bst",
+          "kp-tree"
+        ],
+        "retrieved_ids": [
+          "kp-bst",
+          "kp-tree",
+          "kp-search",
+          "kp-complexity",
+          "kp-search-binary",
+          "kp-intro",
+          "kp-hash",
+          "kp-stack",
+          "kp-search-kmp",
+          "kp-sort-bubble"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "快速排序和归并排序的时间复杂度分别是多少？哪个更稳定？",
+        "relevant_ids": [
+          "kp-sort-merge",
+          "kp-sort-quick"
+        ],
+        "retrieved_ids": [
+          "kp-sort-quick",
+          "kp-sort-merge",
+          "kp-sort",
+          "kp-complexity",
+          "kp-sort-selection",
+          "kp-sort-bubble",
+          "kp-queue",
+          "kp-intro",
+          "kp-stack",
+          "kp-search-binary"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "哈希表是如何解决冲突的？",
+        "relevant_ids": [
+          "kp-hash"
+        ],
+        "retrieved_ids": [
+          "kp-hash",
+          "kp-search",
+          "kp-linkedlist",
+          "kp-graph",
+          "kp-complexity",
+          "kp-sort",
+          "kp-search-kmp",
+          "kp-sort-bubble",
+          "kp-sort-quick",
+          "kp-search-binary"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "图的深度优先遍历和广度优先遍历有什么区别？各自用什么数据结构？",
+        "relevant_ids": [
+          "kp-graph",
+          "kp-queue",
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-graph",
+          "kp-queue",
+          "kp-complexity",
+          "kp-stack",
+          "kp-intro",
+          "kp-search",
+          "kp-sort-selection",
+          "kp-hash",
+          "kp-linkedlist",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是平衡二叉树？为什么需要平衡操作？",
+        "relevant_ids": [
+          "kp-bst",
+          "kp-tree"
+        ],
+        "retrieved_ids": [
+          "kp-tree",
+          "kp-bst",
+          "kp-linkedlist",
+          "kp-search-binary",
+          "kp-search",
+          "kp-intro",
+          "kp-complexity",
+          "kp-sort-selection",
+          "kp-search-kmp",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "冒泡排序和选择排序哪个效率更高？它们的区别在哪里？",
+        "relevant_ids": [
+          "kp-sort-bubble",
+          "kp-sort-selection"
+        ],
+        "retrieved_ids": [
+          "kp-sort",
+          "kp-sort-bubble",
+          "kp-sort-selection",
+          "kp-sort-quick",
+          "kp-sort-merge",
+          "kp-queue",
+          "kp-stack",
+          "kp-search-binary",
+          "kp-search",
+          "kp-recursion"
+        ],
+        "mrr": 0.5,
+        "recall@5": 1.0
+      },
+      {
+        "query": "单链表和双链表有什么区别？在什么情况下应该用双链表？",
+        "relevant_ids": [
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-search-kmp",
+          "kp-string",
+          "kp-array",
+          "kp-graph",
+          "kp-complexity",
+          "kp-intro",
+          "kp-search",
+          "kp-hash",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "如何判断一个链表是否有环？",
+        "relevant_ids": [
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-search-kmp",
+          "kp-search-binary",
+          "kp-graph",
+          "kp-search",
+          "kp-hash",
+          "kp-complexity",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-tree"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是递归？递归和迭代相比有什么优缺点？",
+        "relevant_ids": [
+          "kp-recursion"
+        ],
+        "retrieved_ids": [
+          "kp-recursion",
+          "kp-sort-merge",
+          "kp-sort",
+          "kp-stack",
+          "kp-complexity",
+          "kp-search-kmp",
+          "kp-queue",
+          "kp-linkedlist",
+          "kp-dp",
+          "kp-intro"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "二分查找的前提条件是什么？时间复杂度是多少？",
+        "relevant_ids": [
+          "kp-search-binary"
+        ],
+        "retrieved_ids": [
+          "kp-search",
+          "kp-search-binary",
+          "kp-complexity",
+          "kp-graph",
+          "kp-hash",
+          "kp-sort-merge",
+          "kp-stack",
+          "kp-intro",
+          "kp-queue",
+          "kp-sort-quick"
+        ],
+        "mrr": 0.5,
+        "recall@5": 1.0
+      },
+      {
+        "query": "栈的括号匹配问题怎么解决？",
+        "relevant_ids": [
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-stack",
+          "kp-search-kmp",
+          "kp-complexity",
+          "kp-string",
+          "kp-recursion",
+          "kp-queue",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-search-binary",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "图的表示方式有哪些？各有什么优缺点？",
+        "relevant_ids": [
+          "kp-graph"
+        ],
+        "retrieved_ids": [
+          "kp-graph",
+          "kp-complexity",
+          "kp-linkedlist",
+          "kp-search",
+          "kp-hash",
+          "kp-intro",
+          "kp-string",
+          "kp-queue",
+          "kp-sort-selection",
+          "kp-sort"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是堆？堆排序的时间复杂度是多少？",
+        "relevant_ids": [
+          "kp-heap"
+        ],
+        "retrieved_ids": [
+          "kp-heap",
+          "kp-complexity",
+          "kp-sort-quick",
+          "kp-intro",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-array",
+          "kp-sort-merge",
+          "kp-sort-bubble",
+          "kp-hash"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "拓扑排序有什么用？怎么实现？",
+        "relevant_ids": [
+          "kp-graph",
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-sort",
+          "kp-sort-quick",
+          "kp-sort-selection",
+          "kp-sort-bubble",
+          "kp-sort-merge",
+          "kp-search-binary",
+          "kp-queue",
+          "kp-search",
+          "kp-stack",
+          "kp-search-kmp"
+        ],
+        "mrr": 0.1111,
+        "recall@5": 0.0
+      },
+      {
+        "query": "哈希表查找的平均时间复杂度为什么是O(1)？",
+        "relevant_ids": [
+          "kp-hash"
+        ],
+        "retrieved_ids": [
+          "kp-hash",
+          "kp-complexity",
+          "kp-search",
+          "kp-search-binary",
+          "kp-intro",
+          "kp-graph",
+          "kp-search-kmp",
+          "kp-linkedlist",
+          "kp-sort",
+          "kp-sort-selection"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "链表的快慢指针有什么典型应用？",
+        "relevant_ids": [
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-search-kmp",
+          "kp-hash",
+          "kp-sort-quick",
+          "kp-search",
+          "kp-sort",
+          "kp-graph",
+          "kp-search-binary",
+          "kp-string",
+          "kp-bst"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "动态规划的核心思想是什么？和分治算法有什么区别？",
+        "relevant_ids": [
+          "kp-dp"
+        ],
+        "retrieved_ids": [
+          "kp-dp",
+          "kp-intro",
+          "kp-sort-quick",
+          "kp-search-binary",
+          "kp-search",
+          "kp-recursion",
+          "kp-sort-merge",
+          "kp-sort",
+          "kp-complexity",
+          "kp-search-kmp"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "KMP算法的核心思想是什么？为什么比暴力匹配快？",
+        "relevant_ids": [
+          "kp-search-kmp"
+        ],
+        "retrieved_ids": [
+          "kp-search-kmp",
+          "kp-sort-quick",
+          "kp-intro",
+          "kp-complexity",
+          "kp-search",
+          "kp-search-binary",
+          "kp-sort-selection",
+          "kp-sort",
+          "kp-hash",
+          "kp-sort-bubble"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      }
+    ],
+    "hybrid": [
+      {
+        "query": "数组和链表有什么区别？在插入操作上哪个更快？",
+        "relevant_ids": [
+          "kp-array",
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-array",
+          "kp-search-kmp",
+          "kp-graph",
+          "kp-string",
+          "kp-sort",
+          "kp-stack",
+          "kp-complexity",
+          "kp-queue",
+          "kp-sort-quick"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "栈和队列的应用场景分别是什么？",
+        "relevant_ids": [
+          "kp-queue",
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-queue",
+          "kp-stack",
+          "kp-recursion",
+          "kp-sort",
+          "kp-sort-bubble",
+          "kp-array",
+          "kp-sort-merge",
+          "kp-sort-selection",
+          "kp-heap",
+          "kp-complexity"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是二叉搜索树？它的查找时间复杂度是多少？",
+        "relevant_ids": [
+          "kp-bst",
+          "kp-tree"
+        ],
+        "retrieved_ids": [
+          "kp-bst",
+          "kp-complexity",
+          "kp-tree",
+          "kp-search",
+          "kp-search-binary",
+          "kp-intro",
+          "kp-hash",
+          "kp-stack",
+          "kp-search-kmp",
+          "kp-sort-bubble"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "快速排序和归并排序的时间复杂度分别是多少？哪个更稳定？",
+        "relevant_ids": [
+          "kp-sort-merge",
+          "kp-sort-quick"
+        ],
+        "retrieved_ids": [
+          "kp-sort-quick",
+          "kp-sort-merge",
+          "kp-sort",
+          "kp-complexity",
+          "kp-sort-selection",
+          "kp-sort-bubble",
+          "kp-queue",
+          "kp-intro",
+          "kp-stack",
+          "kp-search-binary"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "哈希表是如何解决冲突的？",
+        "relevant_ids": [
+          "kp-hash"
+        ],
+        "retrieved_ids": [
+          "kp-hash",
+          "kp-search",
+          "kp-linkedlist",
+          "kp-graph",
+          "kp-complexity",
+          "kp-sort",
+          "kp-search-kmp",
+          "kp-sort-bubble",
+          "kp-sort-quick",
+          "kp-search-binary"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "图的深度优先遍历和广度优先遍历有什么区别？各自用什么数据结构？",
+        "relevant_ids": [
+          "kp-graph",
+          "kp-queue",
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-graph",
+          "kp-queue",
+          "kp-complexity",
+          "kp-stack",
+          "kp-intro",
+          "kp-search",
+          "kp-sort-selection",
+          "kp-hash",
+          "kp-linkedlist",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是平衡二叉树？为什么需要平衡操作？",
+        "relevant_ids": [
+          "kp-bst",
+          "kp-tree"
+        ],
+        "retrieved_ids": [
+          "kp-bst",
+          "kp-tree",
+          "kp-linkedlist",
+          "kp-search-binary",
+          "kp-search",
+          "kp-intro",
+          "kp-complexity",
+          "kp-sort-selection",
+          "kp-search-kmp",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "冒泡排序和选择排序哪个效率更高？它们的区别在哪里？",
+        "relevant_ids": [
+          "kp-sort-bubble",
+          "kp-sort-selection"
+        ],
+        "retrieved_ids": [
+          "kp-sort-bubble",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-sort-quick",
+          "kp-sort-merge",
+          "kp-queue",
+          "kp-stack",
+          "kp-search-binary",
+          "kp-search",
+          "kp-recursion"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "单链表和双链表有什么区别？在什么情况下应该用双链表？",
+        "relevant_ids": [
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-search-kmp",
+          "kp-string",
+          "kp-array",
+          "kp-graph",
+          "kp-complexity",
+          "kp-intro",
+          "kp-search",
+          "kp-hash",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "如何判断一个链表是否有环？",
+        "relevant_ids": [
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-search-kmp",
+          "kp-search-binary",
+          "kp-graph",
+          "kp-search",
+          "kp-hash",
+          "kp-complexity",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-tree"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是递归？递归和迭代相比有什么优缺点？",
+        "relevant_ids": [
+          "kp-recursion"
+        ],
+        "retrieved_ids": [
+          "kp-recursion",
+          "kp-sort-merge",
+          "kp-sort",
+          "kp-stack",
+          "kp-complexity",
+          "kp-search-kmp",
+          "kp-queue",
+          "kp-linkedlist",
+          "kp-dp",
+          "kp-intro"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "二分查找的前提条件是什么？时间复杂度是多少？",
+        "relevant_ids": [
+          "kp-search-binary"
+        ],
+        "retrieved_ids": [
+          "kp-search",
+          "kp-search-binary",
+          "kp-complexity",
+          "kp-graph",
+          "kp-hash",
+          "kp-sort-merge",
+          "kp-stack",
+          "kp-intro",
+          "kp-queue",
+          "kp-sort-quick"
+        ],
+        "mrr": 0.5,
+        "recall@5": 1.0
+      },
+      {
+        "query": "栈的括号匹配问题怎么解决？",
+        "relevant_ids": [
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-stack",
+          "kp-search-kmp",
+          "kp-complexity",
+          "kp-string",
+          "kp-recursion",
+          "kp-queue",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-search-binary",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "图的表示方式有哪些？各有什么优缺点？",
+        "relevant_ids": [
+          "kp-graph"
+        ],
+        "retrieved_ids": [
+          "kp-graph",
+          "kp-complexity",
+          "kp-linkedlist",
+          "kp-search",
+          "kp-hash",
+          "kp-intro",
+          "kp-string",
+          "kp-queue",
+          "kp-sort-selection",
+          "kp-sort"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是堆？堆排序的时间复杂度是多少？",
+        "relevant_ids": [
+          "kp-heap"
+        ],
+        "retrieved_ids": [
+          "kp-complexity",
+          "kp-heap",
+          "kp-sort-quick",
+          "kp-intro",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-array",
+          "kp-sort-merge",
+          "kp-sort-bubble",
+          "kp-hash"
+        ],
+        "mrr": 0.5,
+        "recall@5": 1.0
+      },
+      {
+        "query": "拓扑排序有什么用？怎么实现？",
+        "relevant_ids": [
+          "kp-graph",
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-sort",
+          "kp-sort-quick",
+          "kp-sort-merge",
+          "kp-sort-selection",
+          "kp-sort-bubble",
+          "kp-search-binary",
+          "kp-queue",
+          "kp-search",
+          "kp-stack",
+          "kp-search-kmp"
+        ],
+        "mrr": 0.1111,
+        "recall@5": 0.0
+      },
+      {
+        "query": "哈希表查找的平均时间复杂度为什么是O(1)？",
+        "relevant_ids": [
+          "kp-hash"
+        ],
+        "retrieved_ids": [
+          "kp-hash",
+          "kp-search",
+          "kp-complexity",
+          "kp-search-binary",
+          "kp-intro",
+          "kp-graph",
+          "kp-search-kmp",
+          "kp-linkedlist",
+          "kp-sort",
+          "kp-sort-selection"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "链表的快慢指针有什么典型应用？",
+        "relevant_ids": [
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-search-kmp",
+          "kp-hash",
+          "kp-sort-quick",
+          "kp-search",
+          "kp-sort",
+          "kp-graph",
+          "kp-search-binary",
+          "kp-string",
+          "kp-bst"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "动态规划的核心思想是什么？和分治算法有什么区别？",
+        "relevant_ids": [
+          "kp-dp"
+        ],
+        "retrieved_ids": [
+          "kp-dp",
+          "kp-intro",
+          "kp-search",
+          "kp-sort",
+          "kp-search-kmp",
+          "kp-sort-quick",
+          "kp-search-binary",
+          "kp-recursion",
+          "kp-sort-merge",
+          "kp-complexity"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "KMP算法的核心思想是什么？为什么比暴力匹配快？",
+        "relevant_ids": [
+          "kp-search-kmp"
+        ],
+        "retrieved_ids": [
+          "kp-search-kmp",
+          "kp-intro",
+          "kp-search",
+          "kp-sort",
+          "kp-sort-quick",
+          "kp-complexity",
+          "kp-search-binary",
+          "kp-sort-selection",
+          "kp-hash",
+          "kp-sort-bubble"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      }
+    ],
+    "rewrite": [
+      {
+        "query": "数组和链表有什么区别？在插入操作上哪个更快？",
+        "relevant_ids": [
+          "kp-array",
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-array",
+          "kp-search-kmp",
+          "kp-graph",
+          "kp-string",
+          "kp-sort",
+          "kp-stack",
+          "kp-complexity",
+          "kp-queue",
+          "kp-sort-quick"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "栈和队列的应用场景分别是什么？",
+        "relevant_ids": [
+          "kp-queue",
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-queue",
+          "kp-stack",
+          "kp-recursion",
+          "kp-sort",
+          "kp-sort-bubble",
+          "kp-array",
+          "kp-sort-merge",
+          "kp-sort-selection",
+          "kp-heap",
+          "kp-complexity"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是二叉搜索树？它的查找时间复杂度是多少？",
+        "relevant_ids": [
+          "kp-bst",
+          "kp-tree"
+        ],
+        "retrieved_ids": [
+          "kp-bst",
+          "kp-complexity",
+          "kp-tree",
+          "kp-search",
+          "kp-search-binary",
+          "kp-intro",
+          "kp-hash",
+          "kp-stack",
+          "kp-search-kmp",
+          "kp-sort-bubble"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "快速排序和归并排序的时间复杂度分别是多少？哪个更稳定？",
+        "relevant_ids": [
+          "kp-sort-merge",
+          "kp-sort-quick"
+        ],
+        "retrieved_ids": [
+          "kp-sort-quick",
+          "kp-sort-merge",
+          "kp-sort",
+          "kp-complexity",
+          "kp-sort-selection",
+          "kp-sort-bubble",
+          "kp-queue",
+          "kp-intro",
+          "kp-stack",
+          "kp-search-binary"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "哈希表是如何解决冲突的？",
+        "relevant_ids": [
+          "kp-hash"
+        ],
+        "retrieved_ids": [
+          "kp-hash",
+          "kp-search",
+          "kp-linkedlist",
+          "kp-graph",
+          "kp-complexity",
+          "kp-sort",
+          "kp-search-kmp",
+          "kp-sort-bubble",
+          "kp-sort-quick",
+          "kp-search-binary"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "图的深度优先遍历和广度优先遍历有什么区别？各自用什么数据结构？",
+        "relevant_ids": [
+          "kp-graph",
+          "kp-queue",
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-graph",
+          "kp-queue",
+          "kp-complexity",
+          "kp-stack",
+          "kp-intro",
+          "kp-search",
+          "kp-sort-selection",
+          "kp-hash",
+          "kp-linkedlist",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是平衡二叉树？为什么需要平衡操作？",
+        "relevant_ids": [
+          "kp-bst",
+          "kp-tree"
+        ],
+        "retrieved_ids": [
+          "kp-bst",
+          "kp-tree",
+          "kp-linkedlist",
+          "kp-search-binary",
+          "kp-search",
+          "kp-intro",
+          "kp-complexity",
+          "kp-sort-selection",
+          "kp-search-kmp",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "冒泡排序和选择排序哪个效率更高？它们的区别在哪里？",
+        "relevant_ids": [
+          "kp-sort-bubble",
+          "kp-sort-selection"
+        ],
+        "retrieved_ids": [
+          "kp-sort-bubble",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-sort-quick",
+          "kp-sort-merge",
+          "kp-queue",
+          "kp-stack",
+          "kp-search-binary",
+          "kp-search",
+          "kp-recursion"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "单链表和双链表有什么区别？在什么情况下应该用双链表？",
+        "relevant_ids": [
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-search-kmp",
+          "kp-string",
+          "kp-array",
+          "kp-graph",
+          "kp-complexity",
+          "kp-intro",
+          "kp-search",
+          "kp-hash",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "如何判断一个链表是否有环？",
+        "relevant_ids": [
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-search-kmp",
+          "kp-search-binary",
+          "kp-graph",
+          "kp-search",
+          "kp-hash",
+          "kp-complexity",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-tree"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是递归？递归和迭代相比有什么优缺点？",
+        "relevant_ids": [
+          "kp-recursion"
+        ],
+        "retrieved_ids": [
+          "kp-recursion",
+          "kp-sort-merge",
+          "kp-sort",
+          "kp-stack",
+          "kp-complexity",
+          "kp-search-kmp",
+          "kp-queue",
+          "kp-linkedlist",
+          "kp-dp",
+          "kp-intro"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "二分查找的前提条件是什么？时间复杂度是多少？",
+        "relevant_ids": [
+          "kp-search-binary"
+        ],
+        "retrieved_ids": [
+          "kp-search",
+          "kp-search-binary",
+          "kp-complexity",
+          "kp-graph",
+          "kp-hash",
+          "kp-sort-merge",
+          "kp-stack",
+          "kp-intro",
+          "kp-queue",
+          "kp-sort-quick"
+        ],
+        "mrr": 0.5,
+        "recall@5": 1.0
+      },
+      {
+        "query": "栈的括号匹配问题怎么解决？",
+        "relevant_ids": [
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-stack",
+          "kp-search-kmp",
+          "kp-complexity",
+          "kp-string",
+          "kp-recursion",
+          "kp-queue",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-search-binary",
+          "kp-sort-merge"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "图的表示方式有哪些？各有什么优缺点？",
+        "relevant_ids": [
+          "kp-graph"
+        ],
+        "retrieved_ids": [
+          "kp-graph",
+          "kp-complexity",
+          "kp-linkedlist",
+          "kp-search",
+          "kp-hash",
+          "kp-intro",
+          "kp-string",
+          "kp-queue",
+          "kp-sort-selection",
+          "kp-sort"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "什么是堆？堆排序的时间复杂度是多少？",
+        "relevant_ids": [
+          "kp-heap"
+        ],
+        "retrieved_ids": [
+          "kp-complexity",
+          "kp-heap",
+          "kp-sort-quick",
+          "kp-intro",
+          "kp-sort",
+          "kp-sort-selection",
+          "kp-array",
+          "kp-sort-merge",
+          "kp-sort-bubble",
+          "kp-hash"
+        ],
+        "mrr": 0.5,
+        "recall@5": 1.0
+      },
+      {
+        "query": "拓扑排序有什么用？怎么实现？",
+        "relevant_ids": [
+          "kp-graph",
+          "kp-stack"
+        ],
+        "retrieved_ids": [
+          "kp-sort",
+          "kp-sort-quick",
+          "kp-sort-merge",
+          "kp-sort-selection",
+          "kp-sort-bubble",
+          "kp-search-binary",
+          "kp-queue",
+          "kp-search",
+          "kp-stack",
+          "kp-search-kmp"
+        ],
+        "mrr": 0.1111,
+        "recall@5": 0.0
+      },
+      {
+        "query": "哈希表查找的平均时间复杂度为什么是O(1)？",
+        "relevant_ids": [
+          "kp-hash"
+        ],
+        "retrieved_ids": [
+          "kp-hash",
+          "kp-search",
+          "kp-complexity",
+          "kp-search-binary",
+          "kp-intro",
+          "kp-graph",
+          "kp-search-kmp",
+          "kp-linkedlist",
+          "kp-sort",
+          "kp-sort-selection"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "链表的快慢指针有什么典型应用？",
+        "relevant_ids": [
+          "kp-linkedlist"
+        ],
+        "retrieved_ids": [
+          "kp-linkedlist",
+          "kp-search-kmp",
+          "kp-hash",
+          "kp-sort-quick",
+          "kp-search",
+          "kp-sort",
+          "kp-graph",
+          "kp-search-binary",
+          "kp-string",
+          "kp-bst"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "动态规划的核心思想是什么？和分治算法有什么区别？",
+        "relevant_ids": [
+          "kp-dp"
+        ],
+        "retrieved_ids": [
+          "kp-dp",
+          "kp-intro",
+          "kp-search",
+          "kp-sort",
+          "kp-search-kmp",
+          "kp-sort-quick",
+          "kp-search-binary",
+          "kp-recursion",
+          "kp-sort-merge",
+          "kp-complexity"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      },
+      {
+        "query": "KMP算法的核心思想是什么？为什么比暴力匹配快？",
+        "relevant_ids": [
+          "kp-search-kmp"
+        ],
+        "retrieved_ids": [
+          "kp-search-kmp",
+          "kp-intro",
+          "kp-search",
+          "kp-sort",
+          "kp-sort-quick",
+          "kp-complexity",
+          "kp-search-binary",
+          "kp-sort-selection",
+          "kp-hash",
+          "kp-sort-bubble"
+        ],
+        "mrr": 1.0,
+        "recall@5": 1.0
+      }
+    ]
+  },
+  "passes": [
+    {
+      "pass": 1,
+      "latency_ms": {
+        "direct": 186.08,
+        "hybrid": 34.47,
+        "rewrite": 26.97
+      }
+    }
+  ],
+  "dataset": "sample"
+}

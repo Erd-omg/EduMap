@@ -21,31 +21,16 @@ from typing import AsyncIterator
 from fastapi import APIRouter, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
+from src.analysis.intent import classify_intent, contains_profile_intent
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
 
 # ── Profile keywords and topics ─────────────────────────────────────────
 
-# Strong background-disclosure signals.  Deliberately excludes single
-# characters / generic verbs like 我, 学习, 掌握, 之前 — those appear in
-# ordinary knowledge questions ("学习链表之前我应该先掌握什么？") and must
-# not mark a message as profile-oriented.
-BACKGROUND_SIGNALS = [
-    "我的", "专业", "年级", "学校", "学过", "熟悉", "擅长",
-    "弱项", "困难", "不懂", "背景", "基础", "水平", "能力",
-    "掌握程度", "感兴趣",
-]
-
-# Interrogative markers — a message containing any of these is a *question*
-# and should reach the Mentor (RAG) answer path rather than being swallowed
-# by profile analysis.
-QUESTION_MARKERS = [
-    "什么", "怎么", "如何", "为什么", "为啥", "哪些", "哪个", "怎样",
-    "吗", "呢", "对不对", "是不是", "有没有", "可不可以", "该不该",
-    "区别", "对比", "原理", "含义", "怎么办", "步骤",
-    "先学", "先掌握", "需要掌握",
-]
+# Background / question keyword heuristics now live in src.analysis.intent,
+# where they form the rule path of the multi-path fused intent classifier.
 
 PROFILE_TOPICS = {
     "python": "Python",
@@ -67,27 +52,6 @@ PROFILE_TOPICS = {
     "概率": "概率论",
     "统计": "统计学",
 }
-
-
-def _contains_profile_intent(text: str) -> bool:
-    """Heuristic: does the message look profile-oriented?
-
-    Requires an explicit self-disclosure (我是/我在学/我的背景 …) or a
-    strong background-signal word.  Generic tokens like 我/学习/掌握 no
-    longer count on their own.
-    """
-    if re.search(r"(我是|我叫|我在学|我正在|我目前|我学过|我以前|我打算|我想学|我准备)", text):
-        return True
-    if re.search(r"(我的|自己的)(背景|水平|基础|情况|目标|专业|能力|弱点|困难|学习风格)", text):
-        return True
-    return any(kw in text for kw in BACKGROUND_SIGNALS)
-
-
-def _is_question(text: str) -> bool:
-    """Heuristic: does the message look like a question (not a statement)?"""
-    if "?" in text or "？" in text:
-        return True
-    return any(marker in text for marker in QUESTION_MARKERS)
 
 
 def _extract_topics(text: str) -> dict[str, float]:
@@ -223,7 +187,7 @@ async def _gen_profile_analysis(
         msg = f"了解到你在 {topics_str} 方面的背景，我会根据你的情况调整学习建议。"
     else:
         msg = "已记录你的学习信息，你可以继续分享更多背景，或者提出具体的学习问题。"
-        if not _contains_profile_intent(text):
+        if not contains_profile_intent(text):
             msg = ""
 
     yield {
@@ -382,23 +346,38 @@ async def stream_analysis(
     """
     _ensure_profiles(request)
 
-    is_profile = _contains_profile_intent(message)
-    is_question = _is_question(message)
     has_topic = bool(_extract_topics(message))
 
-    # Questions about knowledge ("学习链表之前我应该先掌握什么？") must reach
-    # the Mentor RAG answer path — the profile keyword heuristic used to
-    # swallow them with the canned "已记录你的学习信息…" message.
-    if is_profile and has_topic:
+    # Multi-path fused intent recognition (rule fast-path, LLM semantic
+    # vote + embedding few-shot vote on ambiguity, LRU/TTL cached).
+    # Replaces the old two-heuristic branch, which mis-routed messages like
+    # "我学过链表，请问什么是二叉树？" to profile-only analysis.
+    intent = await classify_intent(
+        message, request, user_id=user_id, has_topic=has_topic
+    )
+
+    if intent.intent == "mixed":
         generator = _gen_mixed(message, user_id, request)
-    elif is_question and not is_profile:
-        generator = _gen_mentor_answer(message, user_id, request)
-    elif is_profile:
+    elif intent.intent == "profile":
         generator = _gen_profile_analysis(message, user_id, request)
     else:
         generator = _gen_mentor_answer(message, user_id, request)
 
-    return EventSourceResponse(generator)
+    # Lead with the intent event (observability / future trace panel).
+    async def _stream() -> AsyncIterator[dict]:
+        yield {
+            "event": "intent",
+            "data": json.dumps({
+                "intent": intent.intent,
+                "confidence": intent.confidence,
+                "path": intent.path,
+                "votes": intent.votes,
+            }, ensure_ascii=False, default=str),
+        }
+        async for event in generator:
+            yield event
+
+    return EventSourceResponse(_stream())
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────

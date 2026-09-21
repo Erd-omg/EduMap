@@ -21,6 +21,16 @@ export interface MentorSource {
   resource_id?: string | null;
 }
 
+/** Intent classification emitted by the backend `intent` SSE event. */
+export interface IntentInfo {
+  intent: 'profile' | 'question' | 'mixed';
+  confidence: number;
+  /** How the decision was made: cache | rule | fused | fallback */
+  path: string;
+  /** Per-path vote details: { llm: {intent, confidence, weight, reason}, ... } */
+  votes?: Record<string, Record<string, unknown>>;
+}
+
 export interface Message {
   id: string;
   type: MessageType;
@@ -35,6 +45,8 @@ export interface Message {
   confidence?: number;
   /** For mentor mode — source references */
   sources?: MentorSource[];
+  /** Intent classification for this assistant message */
+  intent?: IntentInfo;
   /** For error type */
   source?: string;
 }
@@ -64,6 +76,8 @@ interface ChatState {
   isStreaming: boolean;
   streamingContent: string;
   sources: MentorSource[];
+  /** Intent of the message currently being processed (from `intent` SSE event) */
+  lastIntent: IntentInfo | null;
 
   // Mode (unified — no toggle, always connects to analysis endpoint)
   mode: 'unified';
@@ -77,6 +91,7 @@ interface ChatState {
   setStreamingContent: (content: string) => void;
   appendStreamingContent: (token: string) => void;
   setSources: (sources: MentorSource[]) => void;
+  setIntent: (intent: IntentInfo | null) => void;
   clearMessages: () => void;
   finalizeMessage: (sources?: MentorSource[]) => void;
 
@@ -110,6 +125,7 @@ export const useChatStore = create<ChatState>()(
       isStreaming: false,
       streamingContent: '',
       sources: [],
+      lastIntent: null,
       mode: 'unified',
       sessions: [],
 
@@ -157,6 +173,8 @@ export const useChatStore = create<ChatState>()(
 
       setSources: (sources) => set({ sources }),
 
+      setIntent: (intent) => set({ lastIntent: intent }),
+
       clearMessages: () =>
         set((s) => {
           const id = s.activeSessionId;
@@ -179,6 +197,7 @@ export const useChatStore = create<ChatState>()(
             content,
             timestamp: Date.now(),
             ...(sources && sources.length > 0 ? { sources } : {}),
+            ...(s.lastIntent ? { intent: s.lastIntent } : {}),
           };
           const id = s.activeSessionId;
           if (!id) return { streamingContent: '', isStreaming: false };
@@ -198,6 +217,7 @@ export const useChatStore = create<ChatState>()(
             sessions: updatedSessions,
             streamingContent: '',
             isStreaming: false,
+            lastIntent: null,
             ...(sources ? { sources: [] } : {}),
           };
         }),
@@ -221,6 +241,7 @@ export const useChatStore = create<ChatState>()(
           sessionMessages: { ...s.sessionMessages, [id]: [] },
           streamingContent: '',
           sources: [],
+          lastIntent: null,
         }));
         return id;
       },
@@ -248,6 +269,7 @@ export const useChatStore = create<ChatState>()(
             sessionMessages: updatedMessages,
             streamingContent: '',
             sources: [],
+            lastIntent: null,
           };
         });
       },

@@ -152,4 +152,61 @@ describe('GenerationProgress', () => {
     act(() => es.emit('agent_complete', { agent: 'planner', phase: 'EXTRACT' }))
     expect(screen.getAllByText('已完成').length).toBe(1)
   })
+
+  it('renders per-agent trace (duration + tool calls) from agent_complete', async () => {
+    render(<GenerationProgress sessionId="s1" onComplete={vi.fn()} />)
+    await flushAsync()
+    const es = MockEventSource.instances[0]
+
+    act(() =>
+      es.emit('agent_complete', {
+        agent: 'planner',
+        phase: 'EXTRACT',
+        report: {
+          duration_ms: 6982.96,
+          tool_calls: [
+            { tool: 'knowledge_graph_search', success: true, duration_ms: 7.97 },
+          ],
+        },
+      }),
+    )
+
+    const trace = screen.getByTestId('agent-trace-planner')
+    expect(trace.textContent).toContain('7.0s') // 6982.96ms
+    expect(trace.textContent).toContain('knowledge_graph_search')
+    expect(trace.textContent).toContain('8ms') // 7.97ms rounded
+  })
+
+  it('restores the trace from /status on refresh', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        overall_status: 'completed',
+        agent_results: {
+          planner: {
+            _report: {
+              duration_ms: 1234,
+              tool_calls: [{ tool: 'resource_search', success: true }],
+            },
+          },
+        },
+      }),
+    })
+
+    render(<GenerationProgress sessionId="s1" onComplete={vi.fn()} />)
+    await flushAsync()
+
+    const trace = screen.getByTestId('agent-trace-planner')
+    expect(trace.textContent).toContain('1.2s')
+    expect(trace.textContent).toContain('resource_search')
+  })
+
+  it('omits the trace when no report is present', async () => {
+    render(<GenerationProgress sessionId="s1" onComplete={vi.fn()} />)
+    await flushAsync()
+    const es = MockEventSource.instances[0]
+
+    act(() => es.emit('agent_complete', { agent: 'planner', phase: 'EXTRACT' }))
+    expect(screen.queryByTestId('agent-trace-planner')).toBeNull()
+  })
 })

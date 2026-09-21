@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useChatStore, type Message } from '../chat-store'
+import { useChatStore, type Message, type IntentInfo } from '../chat-store'
 
 describe('ChatStore', () => {
   beforeEach(() => {
@@ -9,6 +9,7 @@ describe('ChatStore', () => {
       isStreaming: false,
       streamingContent: '',
       sources: [],
+      lastIntent: null,
       sessions: [],
     })
   })
@@ -109,6 +110,34 @@ describe('ChatStore', () => {
     expect(messages[0].content).toBe('Final content')
     expect(useChatStore.getState().streamingContent).toBe('')
     expect(useChatStore.getState().isStreaming).toBe(false)
+  })
+
+  it('setIntent stores intent and finalizeMessage attaches it to the message', () => {
+    const id = useChatStore.getState().createSession()
+    const intent: IntentInfo = {
+      intent: 'mixed',
+      confidence: 0.87,
+      path: 'fused',
+      votes: { llm: { intent: 'mixed', confidence: 0.9, weight: 2 } },
+    }
+
+    useChatStore.getState().setIntent(intent)
+    expect(useChatStore.getState().lastIntent).toEqual(intent)
+
+    useChatStore.getState().setStreamingContent('Answer with intent')
+    useChatStore.getState().finalizeMessage()
+
+    const messages = useChatStore.getState().sessionMessages[id]
+    expect(messages).toHaveLength(1)
+    expect(messages[0].intent).toEqual(intent)
+    // Intent is cleared after finalization
+    expect(useChatStore.getState().lastIntent).toBeNull()
+  })
+
+  it('createSession resets lastIntent', () => {
+    useChatStore.getState().setIntent({ intent: 'question', confidence: 0.9, path: 'rule' })
+    useChatStore.getState().createSession()
+    expect(useChatStore.getState().lastIntent).toBeNull()
   })
 
   it('getMessages returns messages for active session', () => {

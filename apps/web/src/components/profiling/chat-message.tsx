@@ -4,6 +4,7 @@ import { useMemo, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import type { Message } from '@/stores/chat-store';
 import { SourcePopover } from '@/components/provenance/source-popover';
+import { IntentBadge } from './intent-badge';
 
 function formatTime(timestamp: number): string {
   const d = new Date(timestamp);
@@ -269,6 +270,7 @@ function AiTextMessage({
           )}
         </div>
         <div className="mt-1 text-right text-[10px] text-text-light flex items-center justify-end gap-2">
+          {message.intent && <IntentBadge intent={message.intent} />}
           {message.sources && message.sources.length > 0 ? (
             <SourcePopover sources={message.sources} />
           ) : message.type === 'ai_text' && !isStreaming ? (

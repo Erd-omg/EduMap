@@ -7,11 +7,30 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 type AgentStatus = 'pending' | 'running' | 'completed' | 'failed';
 type OverallStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
 
+/** One tool invocation, as recorded on the agent's ExecutionReport. */
+interface ToolCallTrace {
+  tool: string;
+  args?: Record<string, unknown>;
+  success?: boolean;
+  output?: string;
+  error?: string | null;
+  duration_ms?: number;
+}
+
+/** Per-agent telemetry attached to agent_complete / agent_results._report. */
+interface AgentReport {
+  duration_ms?: number;
+  retries?: number;
+  tool_calls?: ToolCallTrace[];
+  memory_context_loaded?: boolean;
+}
+
 interface AgentPhase {
   agent: string;
   phase: string;
   label: string;
   status: AgentStatus;
+  report?: AgentReport;
 }
 
 const AGENTS: AgentPhase[] = [
@@ -93,7 +112,14 @@ export function GenerationProgress({
         // Handle already-completed or failed sessions (no SSE needed)
         if (data.overall_status === 'completed') {
           setOverallStatus('completed');
-          setAgents(AGENTS.map((a) => ({ ...a, status: 'completed' as const })));
+          const agentResults = data.agent_results || {};
+          setAgents(
+            AGENTS.map((a) => ({
+              ...a,
+              status: 'completed' as const,
+              report: agentResults[a.agent]?._report,
+            })),
+          );
           // NOT calling onComplete — this is a restore from refresh, not a
           // real-time completion. Parent would clear sessionId, hiding progress.
           return;
@@ -112,6 +138,7 @@ export function GenerationProgress({
             AGENTS.map((a) => ({
               ...a,
               status: agentResults[a.agent] ? ('completed' as const) : ('pending' as const),
+              report: agentResults[a.agent]?._report,
             })),
           );
           // No more events will arrive — close the stream. (Referencing
@@ -133,6 +160,7 @@ export function GenerationProgress({
             status: completedNames.includes(a.agent)
               ? ('completed' as const)
               : ('pending' as const),
+            report: agentResults[a.agent]?._report,
           })),
         );
         // Session is still in-progress — clear restoring flag so subsequent
@@ -169,7 +197,13 @@ export function GenerationProgress({
         const data = JSON.parse(event.data);
         setAgents((prev) =>
           prev.map((a) =>
-            a.agent === data.agent ? { ...a, status: 'completed' as const } : a,
+            a.agent === data.agent
+              ? {
+                  ...a,
+                  status: 'completed' as const,
+                  report: data.report ?? a.report,
+                }
+              : a,
           ),
         );
       } catch {
@@ -370,6 +404,28 @@ export function GenerationProgress({
                 }`}
               />
             </div>
+            {/* Per-agent trace: duration + tool calls (from _report) */}
+            {(agent.report?.duration_ms != null ||
+              (agent.report?.tool_calls?.length ?? 0) > 0) && (
+              <div
+                className="mt-1 flex flex-col gap-0.5 text-[10px] text-text-light"
+                data-testid={`agent-trace-${agent.agent}`}
+              >
+                {agent.report?.duration_ms != null && (
+                  <span>{(agent.report.duration_ms / 1000).toFixed(1)}s</span>
+                )}
+                {agent.report?.tool_calls?.map((t, i) => (
+                  <span
+                    key={`${t.tool}-${i}`}
+                    title={t.error || t.output || ''}
+                    className={t.success ? 'text-success' : 'text-danger'}
+                  >
+                    🔧 {t.tool}
+                    {t.duration_ms != null && ` ${t.duration_ms.toFixed(0)}ms`}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
