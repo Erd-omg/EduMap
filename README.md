@@ -26,7 +26,7 @@
               │                                                   │
               │  ┌─────────────────────────────────────────┐      │
               │  │   LangGraph 编排 (6 Agents)             │      │
-              │  │  Planner → Guardian → Designer+Coder    │      │
+              │  │  Planner → Guardian ⇉ Designer ∥ Coder  │      │
               │  │  → Content Auditor → Assessment         │      │
               │  └─────────────────────────────────────────┘      │
               │                                                   │
@@ -249,7 +249,7 @@ EduMap/
 
 | 智能体 | 角色 | 技术 |
 |--------|------|------|
-| **Orchestrator** | LangGraph 状态图路由 | StateGraph, 条件边 |
+| **Orchestrator** | LangGraph 状态图路由 | StateGraph, 条件边, 并行 fan-out/fan-in |
 | **Planner** | 知识点提取 | LLM + KG 查重 |
 | **Guardian** | DAG 校验 + 难度单调性 | DFS 拓扑排序 |
 | **Designer** | 多模态内容生成 | LLM 提示词工程 |
@@ -257,6 +257,8 @@ EduMap/
 | **Assessment** | 微测验生成 | LLM 结构化输出 |
 | **Content Auditor** | 生成质量审核 | ChromaDB 相似度 |
 | **Mentor** | RAG 问答（支持对话历史） | ChromaDB + Neo4j 混合检索 + Cross-Encoder Reranking |
+
+**并行生成分支**：Guardian 通过后 **fan-out** 到 Designer 与 Coder 两个分支，二者在同一个 superstep 内并发执行，再由 merge 节点 **fan-in** 汇合（`route_after_generation` 是两条分支共用的扇入路由器）。代价是两个分支并发写共享状态，因此 `EduMapState` 中 `generated_resources`（追加/重置）、`agent_results`（浅合并）、`current_phase` 三个字段必须声明 reducer —— 缺任一个 LangGraph 都会抛 `InvalidUpdateError` 使整次生成失败。`retry_prep` 的重入同样会重新触发双分支。
 
 ### 增强系统（Phase 6-7）
 

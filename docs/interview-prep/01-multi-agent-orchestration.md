@@ -94,19 +94,17 @@
               └─────┬─────┘
                     │ 条件边 route_after_guardian
              ┌──────┴────────┐
-             ▼ 失败           ▼ 通过
+             ▼ 失败           ▼ 通过（fan-out 到两个分支）
         ┌────────┐    ┌────────────┐
-        │  END   │    │#4 designer │  GENERATE
-        └────────┘    └─────┬──────┘
-                            │ 条件边 route_after_designer
-                       失败  ▼ 通过
-                   ┌────────┐   ┌────────────┐
-                   │  END   │   │ #5 coder   │  GENERATE（AST+沙箱）
-                   └────────┘   └─────┬──────┘
-                                      │ 条件边 route_after_failure
-                                 通过  ▼
+        │  END   │    │#4 designer │  GENERATE ─┐ 两分支同处一个
+        └────────┘    └────────────┘            │ superstep，真正并行
+                      ┌────────────┐            │
+                      │ #5 coder   │  GENERATE ─┤ (AST+沙箱)
+                      └────────────┘            │
+                                  条件边 route_after_generation
+                                  ▼
                             ┌────────────┐
-                            │   merge    │  ── 合成节点：聚合双路产物
+                            │   merge    │  ── 合成节点：扇入双路产物
                             └─────┬──────┘
                                   ▼
                             ┌────────────┐
@@ -177,12 +175,19 @@ def create_graph() -> StateGraph:
     builder.set_entry_point("planner")
     builder.add_edge("planner", "guardian")
 
-    # 并行分支：Designer 和 Coder 同时跑
+    # 并行分支：Designer 和 Coder 同处一个 superstep，真正并发执行
+    # 返回 list 即扇出到两个分支；两分支各自的资源在 merge 处扇入汇合
     builder.add_conditional_edges(
         "guardian", route_after_guardian,
-        {END: END, "designer": "designer"},
+        {END: END, "designer": "designer", "coder": "coder"},
     )
-    builder.add_edge("designer", "coder")   # 条件边，失败则终止
+    # 两条分支共用同一个扇入路由器，失败则在 merge 屏障前中止
+    builder.add_conditional_edges(
+        "designer", route_after_generation, {END: END, "merge": "merge"},
+    )
+    builder.add_conditional_edges(
+        "coder", route_after_generation, {END: END, "merge": "merge"},
+    )
     builder.add_edge("merge", "content_auditor")
 
     # 质量门控：审核不通过 → 重试；连续失败 → 降级
@@ -194,6 +199,25 @@ def create_graph() -> StateGraph:
     )
     return builder.compile()
 ```
+
+**并行的前提是状态字段带 reducer。** 这一点很容易被忽略：designer 和 coder 在同一个 superstep 里都会写 `generated_resources`、`agent_results`、`current_phase`，如果不给这三个字段声明 reducer，LangGraph 直接抛 `InvalidUpdateError`（"Can receive only one value per step"）——**整个生成失败**。所以并行不是"加一条边"就完事，配套要改状态定义：
+
+```python
+# state.py：两个分支都写的字段必须带 reducer
+agent_results:      Annotated[Dict[str, Any], _merge_agent_results]   # 浅合并
+generated_resources: Annotated[list, _accumulate_resources]           # 追加／重置
+current_phase:      Annotated[str, lambda _l, r: r]                    # 两分支写同一字面量
+
+def _accumulate_resources(left, right):
+    """非空 right → 追加；空 list → 清空（retry_prep 靠这个重置通道）。"""
+    if not right:
+        return []
+    return list(left or []) + list(right)
+```
+
+这里有个细节值得讲：`generated_resources` 用不了朴素的 `operator.add`，因为 `retry_prep` 节点需要**清空**这个通道，而空 list 在 `operator.add` 下是 no-op，重试就会累积重复资源。所以 reducer 要同时表达"追加"和"重置"两种意图——非空即追加、空即重置。代价是无法表达"本分支没产出"（会连带清掉兄弟分支的），目前唯一写空值的 `retry_prep` 独处一个 superstep，所以安全。
+
+**还有一个容易踩的坑**：既然 reducer 负责累加，两个分支节点就**只能返回自己这一轮的增量**，不能把 `state["generated_resources"]` 读出来再整个写回去——否则每次重试都会把上一轮的产物再追加一遍。这个 bug 我在实现时真的触发过：桩件跑两轮重试，资源列表从 2 条变成 4 条。
 
 重点解释一下 `route_after_review` 这个条件边，它是整个质量闭环的核心：
 
@@ -221,6 +245,8 @@ def route_after_review(state: EduMapState) -> str:
 - **并行管线（Designer ∥ Coder）**：平均总耗时约 **55s**，P95 约 **82s**；吞吐提升到 **65 个/小时**
 
 换算过来，**生成阶段延迟降低约 40%**，P95 也从 135s 降到了 82s，降幅 39%。
+
+> **口径说明（务必按此讲）**：上面这组数字是**设计期架构推算**（对 6 个 Agent 的 LLM 调用耗时求和后，扣除可并行化的 Designer/Coder 分支），**没有原始评测文件**——`benchmark_results/` 里只有 RAG 检索评测和意图评测，没有生成管线的 wall-clock 记录。面试时如实说"这是按调用链推算的，评测框架的原始文件在 RAG 侧"。**能给出的真实证据是拓扑级验证**：用桩件跑同一份图，串行 0.31s vs 并行 0.16s（两分支各 sleep 0.15s），且两分支产物在 `merge` 完整汇合——这证明的是**并行语义成立**，不是生产延迟。
 
 另外一个更隐性的收益是**失败率**：加了质量门控和降级路径之后，整体"生成失败"的占比从原来的约 8% 降到接近 0——因为真正失败的请求都变成"降级成功"了，用户永远拿得到东西，只是置信度低一点。对用户体验来说，这比"转圈圈然后报错"强太多了。
 

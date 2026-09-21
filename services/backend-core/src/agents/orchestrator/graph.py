@@ -2,12 +2,16 @@
 
 Pipeline::
 
-    START → planner → guardian → designer ─┐
-                             └→ coder ─────┤
-                                            ↓
-                                          merge → content_auditor → assessment → END
-                                                   │                  │
-                                                   └← retry (≤2)──────┘
+    START → planner → guardian ─┬→ designer ─┐
+                                └→ coder ────┤
+                                             ↓
+                                           merge → content_auditor → assessment → END
+                                                    │                  │
+                                                    └← retry (≤2)──────┘
+
+Designer and coder run as **parallel branches** off guardian: both read the same
+``knowledge_units`` and each appends its own resources to ``generated_resources``
+before merge joins them.
 """
 
 from __future__ import annotations
@@ -148,7 +152,13 @@ async def designer_node(state: EduMapState) -> dict:
     units = [KnowledgeUnit(**ku) if isinstance(ku, dict) else ku for ku in kus]
     from src.harness.types import AgentInput
 
-    all_resources: list[dict] = list(state.get("generated_resources", []))
+    # Return ONLY this branch's delta.  ``generated_resources`` carries an
+    # append/reset reducer (``_accumulate_resources``, see state.py) because
+    # designer and coder append to it concurrently, so echoing back the
+    # accumulated list would re-append every prior round's resources.
+    # ``retry_prep`` clears the channel before each retry, so the reducer
+    # rebuilds the list from the two branch deltas alone.
+    designer_resources: list[dict] = []
     designer_reports = []
 
     for ku in units:
@@ -166,14 +176,13 @@ async def designer_node(state: EduMapState) -> dict:
         })
         if report.success and report.output:
             result: DesignerOutput = report.output
-            all_resources.extend(r.model_dump() for r in result.resources)
+            designer_resources.extend(r.model_dump() for r in result.resources)
 
     return {
         "current_phase": "GENERATE",
-        "generated_resources": all_resources,
+        "generated_resources": designer_resources,
         "agent_results": {
-            **state.get("agent_results", {}),
-            "designer": {"resources_count": len(all_resources), "_reports": designer_reports},
+            "designer": {"resources_count": len(designer_resources), "_reports": designer_reports},
         },
     }
 
@@ -190,7 +199,8 @@ async def coder_node(state: EduMapState) -> dict:
     units = [KnowledgeUnit(**ku) if isinstance(ku, dict) else ku for ku in kus]
     from src.harness.types import AgentInput
 
-    all_resources: list[dict] = list(state.get("generated_resources", []))
+    # Return ONLY this branch's delta — see the matching note in designer_node.
+    coder_resources: list[dict] = []
     coder_reports: list[dict] = []
 
     for ku in units:
@@ -219,7 +229,7 @@ async def coder_node(state: EduMapState) -> dict:
                     difficulty=ku.difficulty,
                     metadata={"execution_success": result.execution_success},
                 )
-                all_resources.append(res.model_dump())
+                coder_resources.append(res.model_dump())
 
                 if not result.execution_success:
                     logger.warning(
@@ -234,11 +244,8 @@ async def coder_node(state: EduMapState) -> dict:
 
     return {
         "current_phase": "GENERATE",
-        "generated_resources": all_resources,
-        "agent_results": {
-            **state.get("agent_results", {}),
-            "coder": agent_update,
-        },
+        "generated_resources": coder_resources,
+        "agent_results": {"coder": agent_update},
     }
 
 
@@ -349,10 +356,15 @@ async def assessment_node(state: EduMapState) -> dict:
 
 
 def route_after_guardian(state: EduMapState) -> str:
-    """After guardian: if valid, proceed to generation; otherwise END."""
+    """After guardian: if valid, fan out to BOTH generation branches.
+
+    LangGraph sends every value returned from a conditional-edge router along
+    the matching edge, so returning both node names here is what makes the
+    designer and coder branches run concurrently off the same validated plan.
+    """
     if state.get("overall_status") == "failed":
         return END
-    return "designer"
+    return ["designer", "coder"]
 
 
 def route_after_failure(state: EduMapState) -> str:
@@ -363,11 +375,19 @@ def route_after_failure(state: EduMapState) -> str:
     return "merge"
 
 
-def route_after_designer(state: EduMapState) -> str:
-    """After designer: route to coder on success, or abort on failure."""
-    if state.get("overall_status") == "failed":
-        return END
-    return "coder"
+def route_after_generation(state: EduMapState) -> str:
+    """Fan-in for the parallel generation branches — routes to ``merge``.
+
+    Designer and coder share ``route_after_failure``'s failure check; neither
+    has a branch-specific target of its own any more, since both feed merge.
+
+    Note: with two concurrent branches a failure in one does *not* stop the
+    other — LangGraph runs both to completion.  The merge barrier joins them
+    only after both finish, and the failed branch still sets
+    ``overall_status="failed"``, so review/assessment are skipped.  The cost is
+    that the sibling branch's LLM calls are already spent by then.
+    """
+    return route_after_failure(state)
 
 
 def route_after_review(state: EduMapState) -> str:
@@ -429,7 +449,14 @@ async def assessment_degraded_node(state: EduMapState) -> dict:
 
 
 async def retry_prep_node(state: EduMapState) -> dict:
-    """Clear generated resources before retry to avoid duplication."""
+    """Clear generated resources before retry to avoid duplication.
+
+    This node exists specifically to reset the ``generated_resources`` channel.
+    It only works because that channel's reducer treats an empty list as
+    "reset" (see ``_accumulate_resources``): under a plain concatenating
+    reducer an empty list would be a no-op, so retries would accumulate
+    duplicate resources instead of regenerating cleanly.
+    """
     logger.info(
         "Retry prep: clearing generated_resources (was %d items)",
         len(state.get("generated_resources", [])),
@@ -482,20 +509,23 @@ def create_graph() -> StateGraph:
     # Define edges
     builder.set_entry_point("planner")
     builder.add_edge("planner", "guardian")
+    # Guardian fans out to BOTH generation branches — they run in parallel.
     builder.add_conditional_edges(
         "guardian",
         route_after_guardian,
-        {END: END, "designer": "designer"},
+        {END: END, "designer": "designer", "coder": "coder"},
     )
-    # If designer or coder fails, abort the pipeline
+    # Both branches fan back in at merge.  A shared router keeps the abort
+    # boundary identical on each branch: on failure this returns END, so the
+    # merge barrier is never entered with a poisoned state.
     builder.add_conditional_edges(
         "designer",
-        route_after_designer,
-        {END: END, "coder": "coder"},
+        route_after_generation,
+        {END: END, "merge": "merge"},
     )
     builder.add_conditional_edges(
         "coder",
-        route_after_failure,
+        route_after_generation,
         {END: END, "merge": "merge"},
     )
     builder.add_edge("merge", "content_auditor")
@@ -508,7 +538,9 @@ def create_graph() -> StateGraph:
             "assess_degraded": "assess_degraded",
         },
     )
+    # retry_prep re-enters BOTH generation branches, mirroring the initial fan-out.
     builder.add_edge("retry_prep", "designer")
+    builder.add_edge("retry_prep", "coder")
     builder.add_edge("assessment", END)
     builder.add_edge("assess_degraded", END)
 

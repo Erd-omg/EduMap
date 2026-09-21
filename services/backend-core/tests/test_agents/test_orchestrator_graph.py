@@ -12,10 +12,16 @@ import pytest
 from langgraph.graph import END
 
 from src.agents.orchestrator.graph import (
-    route_after_designer,
+    retry_prep_node,
     route_after_failure,
+    route_after_generation,
     route_after_guardian,
     route_after_review,
+)
+from src.agents.orchestrator.state import (
+    EduMapState,
+    _accumulate_resources,
+    _merge_agent_results,
 )
 
 
@@ -61,32 +67,32 @@ def make_failed_entry(id_: str = "kp-a", detail: str = "Failed quality check") -
 
 
 class TestRouteAfterGuardian:
-    """route_after_guardian: after VALIDATE phase."""
+    """route_after_guardian: after VALIDATE phase — fans out to both branches."""
 
-    def test_valid_returns_designer(self) -> None:
-        """When guardian passes, route to designer."""
+    def test_valid_fans_out_to_both_branches(self) -> None:
+        """When guardian passes, route to designer AND coder (parallel fan-out)."""
         state = make_state()
-        assert route_after_guardian(state) == "designer"
+        assert route_after_guardian(state) == ["designer", "coder"]
 
     def test_failed_returns_end(self) -> None:
         """When guardian fails, abort the pipeline."""
         state = make_state({"overall_status": "failed"})
         assert route_after_guardian(state) == END
 
-    def test_empty_state_defaults_to_designer(self) -> None:
-        """Missing overall_status defaults to designer (no failure key)."""
+    def test_empty_state_defaults_to_both_branches(self) -> None:
+        """Missing overall_status fans out (no failure key)."""
         state = make_state({"overall_status": ""})
-        assert route_after_guardian(state) == "designer"
+        assert route_after_guardian(state) == ["designer", "coder"]
 
-    def test_degraded_returns_designer(self) -> None:
+    def test_degraded_fans_out(self) -> None:
         """Degraded status does NOT abort — only 'failed' triggers END."""
         state = make_state({"overall_status": "degraded"})
-        assert route_after_guardian(state) == "designer"
+        assert route_after_guardian(state) == ["designer", "coder"]
 
-    def test_completed_returns_designer(self) -> None:
-        """Already-completed status also routes to designer."""
+    def test_completed_fans_out(self) -> None:
+        """Already-completed status also fans out."""
         state = make_state({"overall_status": "completed"})
-        assert route_after_guardian(state) == "designer"
+        assert route_after_guardian(state) == ["designer", "coder"]
 
 
 # ── route_after_failure ──────────────────────────────────────────────────────
@@ -116,26 +122,26 @@ class TestRouteAfterFailure:
         assert route_after_failure(state) == "merge"
 
 
-# ── route_after_designer ─────────────────────────────────────────────────────
+# ── route_after_generation (parallel fan-in) ─────────────────────────────────
 
 
-class TestRouteAfterDesigner:
-    """route_after_designer: after GENERATE phase (designer branch)."""
+class TestRouteAfterGeneration:
+    """route_after_generation: shared fan-in for the designer + coder branches."""
 
-    def test_ok_returns_coder(self) -> None:
-        """On success, route to coder."""
+    def test_ok_returns_merge(self) -> None:
+        """On success, join the sibling branch at merge."""
         state = make_state()
-        assert route_after_designer(state) == "coder"
+        assert route_after_generation(state) == "merge"
 
     def test_failed_returns_end(self) -> None:
-        """When failed, abort the pipeline."""
+        """When failed, abort before the merge barrier."""
         state = make_state({"overall_status": "failed"})
-        assert route_after_designer(state) == END
+        assert route_after_generation(state) == END
 
-    def test_degraded_status_continues_to_coder(self) -> None:
+    def test_degraded_status_continues_to_merge(self) -> None:
         """Only 'failed' status triggers abort; degraded continues."""
         state = make_state({"overall_status": "degraded"})
-        assert route_after_designer(state) == "coder"
+        assert route_after_generation(state) == "merge"
 
 
 # ── route_after_review ───────────────────────────────────────────────────────
@@ -333,7 +339,7 @@ class TestRoutingOnFailureStatus:
         [
             route_after_guardian,
             route_after_failure,
-            route_after_designer,
+            route_after_generation,
         ],
     )
     def test_all_routes_abort_on_failure(self, routing_fn) -> None:
@@ -346,7 +352,7 @@ class TestRoutingOnFailureStatus:
         [
             route_after_guardian,
             route_after_failure,
-            route_after_designer,
+            route_after_generation,
         ],
     )
     def test_all_routes_continue_on_running(self, routing_fn) -> None:
@@ -366,3 +372,153 @@ class TestRouteAfterReviewFailureRespect:
             "audit_results": [make_passed_entry("kp-a")],
         })
         assert route_after_review(state) == "assessment"
+
+
+# ── State reducers (parallel fan-out legality) ───────────────────────────────
+
+
+class TestAccumulateResourcesReducer:
+    """_accumulate_resources: the append/reset reducer for parallel branches.
+
+    Designer and coder write this channel in the same superstep, so it needs a
+    reducer; ``retry_prep`` clears it, which is why empty means "reset".
+    """
+
+    def test_append_concatenates_concurrent_branch_writes(self) -> None:
+        """Both branches' resources survive the merge."""
+        designer = [{"type": "explanation"}]
+        coder = [{"type": "code"}]
+        assert _accumulate_resources(designer, coder) == [
+            {"type": "explanation"}, {"type": "code"},
+        ]
+
+    def test_append_order_is_left_then_right(self) -> None:
+        assert _accumulate_resources([1], [2, 3]) == [1, 2, 3]
+
+    def test_empty_right_resets_the_channel(self) -> None:
+        """retry_prep returns [] to clear — this is what makes retry idempotent."""
+        assert _accumulate_resources([{"type": "explanation"}], []) == []
+
+    def test_reset_from_empty_is_empty(self) -> None:
+        assert _accumulate_resources([], []) == []
+
+    def test_none_inputs_tolerated(self) -> None:
+        """Missing channel values must not raise (first write of a run)."""
+        assert _accumulate_resources(None, [1]) == [1]
+        assert _accumulate_resources([1], None) == []
+
+    def test_does_not_mutate_left_operand(self) -> None:
+        """Reducers must return a new list — LangGraph may reuse the input."""
+        left = [1]
+        _accumulate_resources(left, [2])
+        assert left == [1]
+
+
+class TestMergeAgentResultsReducer:
+    """_merge_agent_results: shallow merge so both branches keep their key."""
+
+    def test_disjoint_keys_both_survive(self) -> None:
+        merged = _merge_agent_results({"designer": {"n": 1}}, {"coder": {"n": 2}})
+        assert merged == {"designer": {"n": 1}, "coder": {"n": 2}}
+
+    def test_none_inputs_tolerated(self) -> None:
+        assert _merge_agent_results(None, {"coder": {}}) == {"coder": {}}
+        assert _merge_agent_results({"planner": {}}, None) == {"planner": {}}
+        assert _merge_agent_results(None, None) == {}
+
+    def test_does_not_mutate_left_operand(self) -> None:
+        left = {"planner": {}}
+        _merge_agent_results(left, {"designer": {}})
+        assert left == {"planner": {}}
+
+
+class TestParallelFanOutIsLegal:
+    """The designer/coder fan-out must not raise InvalidUpdateError.
+
+    Regression guard for the state channels both branches write.  LangGraph
+    does not reflect ``Annotated`` reducers into importable type hints (see the
+    note on the test below), so this asserts the *behaviour* — concurrent
+    updates to the shared channels are accepted and merged — rather than
+    inspecting metadata.
+    """
+
+    @staticmethod
+    def _build_probe_graph():
+        """Two concurrent branches over EduMapState, mirroring the real graph."""
+        from langgraph.graph import END, StateGraph
+
+        async def start(_state):
+            return {}
+
+        async def designer(_state):
+            return {
+                "current_phase": "GENERATE",
+                "generated_resources": [{"type": "explanation"}],
+                "agent_results": {"designer": {"n": 1}},
+            }
+
+        async def coder(_state):
+            return {
+                "current_phase": "GENERATE",
+                "generated_resources": [{"type": "code"}],
+                "agent_results": {"coder": {"n": 2}},
+            }
+
+        async def join(_state):
+            return {}
+
+        builder = StateGraph(EduMapState)
+        for name, node in (
+            ("start", start), ("designer", designer),
+            ("coder", coder), ("join", join),
+        ):
+            builder.add_node(name, node)
+        builder.set_entry_point("start")
+        builder.add_conditional_edges(
+            "start", lambda s: ["designer", "coder"],
+            {"designer": "designer", "coder": "coder"},
+        )
+        builder.add_conditional_edges("designer", lambda s: "join", {"join": "join"})
+        builder.add_conditional_edges("coder", lambda s: "join", {"join": "join"})
+        builder.add_edge("join", END)
+        return builder.compile()
+
+    async def test_concurrent_branches_do_not_raise(self) -> None:
+        """A missing reducer surfaces here as InvalidUpdateError."""
+        graph = self._build_probe_graph()
+        result = await graph.ainvoke(
+            {"generated_resources": [], "agent_results": {}}
+        )
+        assert result["current_phase"] == "GENERATE"
+
+    async def test_both_branches_resources_survive(self) -> None:
+        graph = self._build_probe_graph()
+        result = await graph.ainvoke(
+            {"generated_resources": [], "agent_results": {}}
+        )
+        assert sorted(r["type"] for r in result["generated_resources"]) == [
+            "code", "explanation",
+        ]
+
+    async def test_both_branches_agent_results_survive(self) -> None:
+        graph = self._build_probe_graph()
+        result = await graph.ainvoke(
+            {"generated_resources": [], "agent_results": {}}
+        )
+        assert result["agent_results"] == {"designer": {"n": 1}, "coder": {"n": 2}}
+
+
+class TestRetryPrepNode:
+    """retry_prep_node: must clear generated_resources, not merely no-op."""
+
+    async def test_returns_empty_list(self) -> None:
+        result = await retry_prep_node(make_state({
+            "generated_resources": [{"type": "explanation"}],
+        }))
+        assert result == {"generated_resources": []}
+
+    async def test_empty_return_actually_clears_under_reducer(self) -> None:
+        """The [] must reset the channel — a no-op here duplicates on retry."""
+        prior = [{"type": "explanation"}, {"type": "code"}]
+        result = await retry_prep_node(make_state({"generated_resources": prior}))
+        assert _accumulate_resources(prior, result["generated_resources"]) == []
