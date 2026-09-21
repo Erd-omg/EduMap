@@ -12,6 +12,8 @@ import pytest
 from langgraph.graph import END
 
 from src.agents.orchestrator.graph import (
+    _graph_ctx,
+    create_graph,
     retry_prep_node,
     route_after_failure,
     route_after_generation,
@@ -184,27 +186,21 @@ class TestRouteAfterReview:
         })
         assert route_after_review(state) == "retry_generate"
 
-    def test_retry_count_incremented(self) -> None:
-        """Route_after_review increments generation_retry_count when failures exist."""
+    def test_router_does_not_mutate_retry_count(self) -> None:
+        """route_after_review must NOT increment the counter itself.
+
+        A conditional-edge router only returns an edge label; LangGraph commits
+        state from *node* returns, so mutating ``state[...]`` here is discarded
+        between supersteps.  When the router did the increment, the counter
+        stayed 0 forever and a permanently-failing audit looped until the
+        recursion limit.  The increment belongs to retry_prep_node.
+        """
         state = make_state({
             "audit_results": [make_failed_entry("kp-a")],
             "generation_retry_count": 0,
         })
-        route_after_review(state)  # Don't care about return value here
-        assert state["generation_retry_count"] == 1
-
-    def test_retry_count_increments_on_subsequent_calls(self) -> None:
-        """Each sequential retry call increments the counter."""
-        state = make_state({
-            "audit_results": [make_failed_entry("kp-a")],
-            "generation_retry_count": 0,
-        })
-
         route_after_review(state)
-        assert state["generation_retry_count"] == 1
-
-        route_after_review(state)
-        assert state["generation_retry_count"] == 2
+        assert state["generation_retry_count"] == 0  # untouched by the router
 
     # ── Mixed pass/fail ──────────────────────────────────────────────────
 
@@ -219,7 +215,6 @@ class TestRouteAfterReview:
             "generation_retry_count": 0,
         })
         assert route_after_review(state) == "retry_generate"
-        assert state["generation_retry_count"] == 1
 
     # ── Max retries reached → degraded ───────────────────────────────────
 
@@ -232,40 +227,22 @@ class TestRouteAfterReview:
         })
         assert route_after_review(state) == "assess_degraded"
 
-    def test_retry_exhausted_increments_beyond_max(self) -> None:
-        """Counter still increments even when exhausted (for observability)."""
-        state = make_state({
-            "audit_results": [make_failed_entry("kp-a")],
-            "generation_retry_count": 2,
-            "max_retries": 2,
-        })
-        route_after_review(state)
-        assert state["generation_retry_count"] == 3  # still incremented
-
-    # ── Boundary: exactly max_retries - 1 → retry ────────────────────────
+    # ── Boundary: retries completed so far vs. the cap ───────────────────
 
     def test_retry_at_boundary_last_allowed_retry(self) -> None:
-        """At generation_retry_count=0 with max_retries=2, one retry is allowed.
-
-        The counter is incremented BEFORE the check, so:
-        0 -> 1, 1 < 2 -> retry_generate.
-        """
+        """With 0 completed retries and max_retries=2, another retry is allowed."""
         state = make_state({
             "audit_results": [make_failed_entry("kp-a")],
             "generation_retry_count": 0,
             "max_retries": 2,
         })
         assert route_after_review(state) == "retry_generate"
-        assert state["generation_retry_count"] == 1
 
     def test_retry_exactly_at_max_returns_degraded(self) -> None:
-        """When generation_retry_count reaches max_retries, route to assess_degraded.
-
-        Counter is incremented first: 1 -> 2, then 2 < 2 is False.
-        """
+        """At generation_retry_count == max_retries the budget is spent."""
         state = make_state({
             "audit_results": [make_failed_entry("kp-a")],
-            "generation_retry_count": 1,
+            "generation_retry_count": 2,
             "max_retries": 2,
         })
         assert route_after_review(state) == "assess_degraded"
@@ -273,47 +250,34 @@ class TestRouteAfterReview:
     # ── Default max_retries ──────────────────────────────────────────────
 
     def test_default_max_retries_is_two(self) -> None:
-        """When max_retries is not set, defaults to 2 (allowing 1 retry).
-
-        Counter is incremented before the check:
-        count=0 -> 1, 1 < 2 -> retry
-        count=1 -> 2, 2 < 2 -> degraded
-        """
+        """With max_retries unset (default 2), 2 completed retries exhaust it."""
         state = make_state({
             "audit_results": [make_failed_entry("kp-a")],
             "generation_retry_count": 0,
         })
-        # Remove max_retries to test default
         del state["max_retries"]
 
-        # First failure -> retry allowed
-        r1 = route_after_review(state)
-        assert r1 == "retry_generate"
-        assert state["generation_retry_count"] == 1
+        assert route_after_review(state) == "retry_generate"  # 0 completed
 
-        # Second failure -> degraded (max_retries reached)
-        r2 = route_after_review(state)
-        assert r2 == "assess_degraded"
-        assert state["generation_retry_count"] == 2
+        state["generation_retry_count"] = 2
+        assert route_after_review(state) == "assess_degraded"  # 2 == default cap
 
     # ── Custom max_retries ───────────────────────────────────────────────
 
     def test_custom_max_retries_honored(self) -> None:
-        """A custom max_retries setting is respected (max_retries=5 -> 4 retries)."""
+        """A custom cap is respected: max_retries=5 allows 5 completed rounds."""
         state = make_state({
             "audit_results": [make_failed_entry("kp-a")],
             "generation_retry_count": 0,
             "max_retries": 5,
         })
 
-        for _ in range(4):
-            result = route_after_review(state)
-            assert result == "retry_generate"
+        for completed in range(5):
+            state["generation_retry_count"] = completed
+            assert route_after_review(state) == "retry_generate"
 
-        # 5th time → exhausted (count goes from 4 to 5, 5 < 5 is False)
-        result = route_after_review(state)
-        assert result == "assess_degraded"
-        assert state["generation_retry_count"] == 5
+        state["generation_retry_count"] = 5
+        assert route_after_review(state) == "assess_degraded"
 
     # ── Edge: single failure after many retries ──────────────────────────
 
@@ -325,7 +289,6 @@ class TestRouteAfterReview:
             "max_retries": 0,
         })
         assert route_after_review(state) == "assess_degraded"
-        assert state["generation_retry_count"] == 1
 
 
 # ── Cross-routing: failure status respected everywhere ───────────────────────
@@ -509,16 +472,144 @@ class TestParallelFanOutIsLegal:
 
 
 class TestRetryPrepNode:
-    """retry_prep_node: must clear generated_resources, not merely no-op."""
+    """retry_prep_node: clears resources AND owns the retry counter.
 
-    async def test_returns_empty_list(self) -> None:
+    The counter lives here rather than in route_after_review because only node
+    return values are committed to state — router mutations are discarded.
+    """
+
+    async def test_clears_resources(self) -> None:
         result = await retry_prep_node(make_state({
             "generated_resources": [{"type": "explanation"}],
         }))
-        assert result == {"generated_resources": []}
+        assert result["generated_resources"] == []
+
+    async def test_increments_retry_count(self) -> None:
+        result = await retry_prep_node(make_state({"generation_retry_count": 0}))
+        assert result["generation_retry_count"] == 1
+
+    async def test_increments_from_existing_value(self) -> None:
+        result = await retry_prep_node(make_state({"generation_retry_count": 3}))
+        assert result["generation_retry_count"] == 4
+
+    async def test_missing_counter_defaults_to_one(self) -> None:
+        state = make_state()
+        del state["generation_retry_count"]
+        result = await retry_prep_node(state)
+        assert result["generation_retry_count"] == 1
 
     async def test_empty_return_actually_clears_under_reducer(self) -> None:
         """The [] must reset the channel — a no-op here duplicates on retry."""
         prior = [{"type": "explanation"}, {"type": "code"}]
         result = await retry_prep_node(make_state({"generated_resources": prior}))
         assert _accumulate_resources(prior, result["generated_resources"]) == []
+
+
+class TestRetryLoopTerminates:
+    """End-to-end guard: a permanently-failing audit must not loop forever.
+
+    This is the regression test for the router-mutation bug.  The unit test
+    ``test_router_does_not_mutate_retry_count`` cannot catch it alone — calling
+    the router on a plain dict makes the mutation *appear* to persist.  Only a
+    real graph run proves the counter advances between supersteps.
+    """
+
+    @staticmethod
+    def _graph_with_permanently_failing_audit():
+        """Build the real graph whose auditor always fails."""
+        from src.agents.models import (
+            AssessmentOutput, AuditEntry, AuditorOutput, CoderOutput,
+            DesignerOutput, GeneratedResource, GenerationPlan, GuardianOutput,
+            KnowledgeUnit, PlannerOutput,
+        )
+        from src.harness.types import ExecutionReport
+
+        ku = KnowledgeUnit(id="kp-1", name="k", description="d", difficulty=2)
+
+        def rep(name, output):
+            return ExecutionReport(
+                agent_name=name, success=True, duration_ms=1.0, output=output
+            )
+
+        class _Planner:
+            async def execute(self, _i):
+                return rep("planner", PlannerOutput(
+                    plan=GenerationPlan(primary_kp_id="kp-1", knowledge_units=[ku]),
+                    summary="s",
+                ))
+
+        class _Guardian:
+            async def run(self, _u):
+                return GuardianOutput(is_valid=True)
+
+        class _Designer:
+            async def execute(self, _i):
+                return rep("designer", DesignerOutput(resources=[GeneratedResource(
+                    type="explanation", title="t", content="c",
+                    kp_id="kp-1", difficulty=2,
+                )]))
+
+        class _Coder:
+            async def execute(self, _i):
+                return rep("coder", CoderOutput(
+                    code="p", ast_valid=True, execution_success=True,
+                ))
+
+        class _Auditor:
+            async def execute(self, _i):
+                return rep("content_auditor", AuditorOutput(
+                    entries=[AuditEntry(resource_index=0, passed=False,
+                                        similarity_score=0.1)],
+                    all_passed=False,
+                ))
+
+        class _Assessment:
+            async def execute(self, _i):
+                return rep("assessment", AssessmentOutput(confidence=0.8))
+
+            async def run(self, knowledge_unit=None, **_kw):
+                # The degraded node calls .run() directly (legacy path).
+                return AssessmentOutput(confidence=0.5)
+
+        _graph_ctx.planner = _Planner()
+        _graph_ctx.guardian = _Guardian()
+        _graph_ctx.designer = _Designer()
+        _graph_ctx.coder = _Coder()
+        _graph_ctx.content_auditor = _Auditor()
+        _graph_ctx.assessment = _Assessment()
+        return create_graph()
+
+    async def test_failing_audit_reaches_degraded_within_budget(self) -> None:
+        """The loop terminates and lands on "degraded", not a recursion error."""
+        from src.agents.orchestrator.state import create_initial_state
+
+        graph = self._graph_with_permanently_failing_audit()
+        result = await graph.ainvoke(
+            create_initial_state("x", "u", "s", knowledge_point_id="kp-1"),
+            config={"recursion_limit": 100},  # would blow up if the loop ran away
+        )
+        assert result["overall_status"] == "degraded"
+
+    async def test_retry_budget_is_respected(self) -> None:
+        """max_retries=2 means exactly 2 retry rounds before degrading."""
+        from src.agents.orchestrator.state import create_initial_state
+
+        graph = self._graph_with_permanently_failing_audit()
+        result = await graph.ainvoke(
+            create_initial_state("x", "u", "s", knowledge_point_id="kp-1"),
+            config={"recursion_limit": 100},
+        )
+        assert result["generation_retry_count"] == 2
+
+    async def test_no_resource_duplication_across_retries(self) -> None:
+        """Each retry regenerates cleanly — the accumulator must not stack up."""
+        from src.agents.orchestrator.state import create_initial_state
+
+        graph = self._graph_with_permanently_failing_audit()
+        result = await graph.ainvoke(
+            create_initial_state("x", "u", "s", knowledge_point_id="kp-1"),
+            config={"recursion_limit": 100},
+        )
+        types = [r["type"] for r in result["generated_resources"]]
+        # 2 branches x 1 resource, from the final round only.
+        assert sorted(types) == ["code", "explanation"], types

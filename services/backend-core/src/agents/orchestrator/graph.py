@@ -335,9 +335,20 @@ async def assessment_node(state: EduMapState) -> dict:
 
     result: AssessmentOutput = report.output
 
-    # Preserve existing failure/degraded status
+    # Mark the run completed unless an earlier stage already set a terminal
+    # status.  The live value here is "running" (see create_initial_state), not
+    # "processing" — that string is an HTTP response field in the /generate
+    # endpoint and never appears in graph state, so whitelisting it meant the
+    # success path kept the initial "running" and every consumer (SSE
+    # workflow_complete, GET /status) reported a finished run as in-progress.
+    # Only genuinely terminal statuses are preserved; anything transient
+    # (running / empty / unknown) resolves to "completed".
     prior_status = state.get("overall_status", "")
-    new_status = "completed" if prior_status in ("", "processing") else prior_status
+    new_status = (
+        prior_status
+        if prior_status in ("failed", "degraded", "cancelled")
+        else "completed"
+    )
     return {
         "current_phase": "ASSESS",
         "assessment_result": result.model_dump(),
@@ -391,21 +402,33 @@ def route_after_generation(state: EduMapState) -> str:
 
 
 def route_after_review(state: EduMapState) -> str:
-    """After content auditor: retry, proceed to assessment, or degrade."""
+    """After content auditor: retry, proceed to assessment, or degrade.
+
+    The retry counter is incremented by the **``retry_prep`` node**, not here.
+    A conditional-edge router's return value is only the edge label — LangGraph
+    commits state from node returns, so mutating ``state[...]`` in this function
+    is discarded between supersteps.  Incrementing here (the previous design)
+    meant the counter reset to 0 on every pass and a permanently-failing audit
+    looped until the graph's recursion limit / the caller's timeout, re-running
+    both expensive generation branches each round.
+
+    Routing only *reads* it now: 0 retries so far → retry; already at the cap
+    (``max_retries``) → degrade.
+    """
     audit_results = state.get("audit_results", [])
     failed = [a for a in audit_results if not a.get("passed", True)]
 
     if not failed:
         return "assessment"
 
-    # Critical: increment retry counter before routing to retry
-    state["generation_retry_count"] = state.get("generation_retry_count", 0) + 1
-    retries = state["generation_retry_count"]
+    retries = state.get("generation_retry_count", 0)
     max_retries = state.get("max_retries", 2)
     logger.info(
         "Content Auditor: %d/%d resources failed, retry %d/%d",
         len(failed), len(audit_results), retries, max_retries,
     )
+    # ``retries`` counts completed retry rounds, so a value of 0 means the
+    # original generation attempt just failed and one retry is still allowed.
     if retries < max_retries:
         return "retry_generate"
 
@@ -428,9 +451,15 @@ async def assessment_degraded_node(state: EduMapState) -> dict:
         primary_kp = units[0] if units else KnowledgeUnit(id="", name="", description="", difficulty=1)
         result: AssessmentOutput = await agent.run(knowledge_unit=primary_kp)
 
-        # Preserve existing failure status (don't overwrite with "degraded")
+        # Same whitelist fix as assessment_node: "running" (the live value) is
+        # not terminal, so it must resolve to "degraded" rather than being
+        # preserved and reported as still in-progress.
         prior_status = state.get("overall_status", "")
-        new_status = "degraded" if prior_status in ("", "processing") else prior_status
+        new_status = (
+            prior_status
+            if prior_status in ("failed", "degraded", "cancelled")
+            else "degraded"
+        )
         return {
             "current_phase": "ASSESS",
             "assessment_result": result.model_dump(),
@@ -451,17 +480,25 @@ async def assessment_degraded_node(state: EduMapState) -> dict:
 async def retry_prep_node(state: EduMapState) -> dict:
     """Clear generated resources before retry to avoid duplication.
 
-    This node exists specifically to reset the ``generated_resources`` channel.
-    It only works because that channel's reducer treats an empty list as
-    "reset" (see ``_accumulate_resources``): under a plain concatenating
-    reducer an empty list would be a no-op, so retries would accumulate
-    duplicate resources instead of regenerating cleanly.
+    Also owns the retry counter.  It has to live in a **node**, because only
+    node return values are committed to state — a router mutating ``state[...]``
+    has that write discarded between supersteps (see ``route_after_review``).
+
+    The ``generated_resources`` reset only works because that channel's reducer
+    treats an empty list as "reset" (see ``_accumulate_resources``): under a
+    plain concatenating reducer an empty list would be a no-op, so retries would
+    accumulate duplicate resources instead of regenerating cleanly.
     """
+    retries = state.get("generation_retry_count", 0) + 1
     logger.info(
-        "Retry prep: clearing generated_resources (was %d items)",
+        "Retry prep: clearing generated_resources (was %d items), retry %d/%d",
         len(state.get("generated_resources", [])),
+        retries, state.get("max_retries", 2),
     )
-    return {"generated_resources": []}
+    return {
+        "generated_resources": [],
+        "generation_retry_count": retries,
+    }
 
 
 # ── Graph builder ───────────────────────────────────────────────────────

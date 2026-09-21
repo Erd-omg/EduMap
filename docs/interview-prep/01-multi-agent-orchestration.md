@@ -116,12 +116,12 @@
            有失败&重试<2      全部通过      有失败&重试≥2
             ┌──────────┐   ┌──────────┐   ┌─────────────┐
             │retry_prep│   │#7 assess │   │assess_degrad│
-            │ 清空产物  │   │  ment    │   │  降级       │
-            └────┬─────┘   └────┬─────┘   └──────┬──────┘
-                 │              ▼                ▼
-        返回 designer 循环   ┌──────┐      ┌──────────┐
-            (重试环)         │ END  │      │   END    │
-                            └──────┘      └──────────┘
+            │清空产物+ │   │  ment    │   │  降级       │
+            │计数 +1   │   └────┬─────┘   └──────┬──────┘
+            └────┬─────┘        ▼                ▼
+                 │          ┌──────┐      ┌──────────┐
+        返回 designer+coder │ END  │      │   END    │
+         双分支（重试环）    └──────┘      └──────────┘
 ```
 
 要点标注：
@@ -227,11 +227,15 @@ def route_after_review(state: EduMapState) -> str:
     if not failed:
         return "assessment"   # 全部通过 → 进入测评
 
-    state["generation_retry_count"] += 1
-    if state["generation_retry_count"] < 2:
+    # 只读计数器，不在路由里自增（见下方说明）
+    if state["generation_retry_count"] < state["max_retries"]:
         return "retry_generate"   # 重试：清空产物，重新进 designer
     return "assess_degraded"      # 连续失败 → 降级，标记低置信度
 ```
+
+> **这里踩过一个很隐蔽的坑，值得单独讲。** 我最初把 `generation_retry_count += 1` 写在 `route_after_review` 里——单测全绿，因为单测直接把状态 dict 传给函数、原地修改当然生效。**但条件边路由器的返回值只是"边标签"，LangGraph 只提交*节点*的返回值**，在路由器里改 `state[...]` 会在 superstep 之间被丢弃。结果就是计数器永远是 0，审核一直不过时**重试环无限循环**，每一轮都重新跑两个昂贵的生成分支，直到撞上图的 recursion limit 或外层 600s 超时。
+>
+> 修复是把自增挪进 `retry_prep` **节点**（节点返回值才会被提交），路由器只读。这件事给我的教训是：**LangGraph 里"原地改状态"和"返回状态更新"不是一回事，而单测打不到这个差异**——所以我现在给重试环补了一个真跑图的端到端测试（构造一个永远审核失败的 audit，断言最终落到 `degraded` 且 `recursion_limit=100` 不炸）。
 
 **为什么这能解决问题？** 因为我把"决策"和"执行"分离了——每个节点函数只管自己的活，路由判断全部收口到条件边里。Designer/Coder 并行跑，谁都不等谁；审核不过就绕回 Designer 重做，最多两轮，再不行就带着低置信度标志降级交付，而不是让整个请求失败。
 
