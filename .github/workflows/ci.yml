@@ -84,9 +84,7 @@ jobs:
         run: |
           cd services/backend-core
           python -m pytest tests/ -v --cov=src --cov-report=term --cov-fail-under=40
-        # Coverage threshold raised from 10% to 40% after adding 575+ tests
-        # across all backend modules (Guardian/Harness/Memory/Tools/KG/
-        # LearningPath/RAG/LLM/Orchestrator/API).
+        # NOTE: 738 tests at ~64% coverage.
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -170,7 +168,12 @@ jobs:
       - name: Run integration tests
         run: |
           cd services/backend-core
-          python -m pytest tests/test_api/ -v --cov=src --cov-report=term --cov-fail-under=40
+          # This job runs ONLY tests/test_api/ (78 tests) as a smoke test against
+          # real Neo4j/Chroma/Postgres/Redis.  That subset structurally cannot
+          # reach the full-suite 40% gate (it never touches rag/agents/memory —
+          # measured ceiling ≈33%), so it uses its own lower floor.  The 40%
+          # gate for the whole suite lives in the `python-tests` job.
+          python -m pytest tests/test_api/ -v --cov=src --cov-report=term --cov-fail-under=30
         env:
           # 127.0.0.1 rather than 'localhost': on the runner, 'localhost'
           # prefers ::1 (IPv6) but the service containers listen on IPv4 only,
