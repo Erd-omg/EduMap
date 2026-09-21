@@ -202,3 +202,83 @@ class TestEdgeCases:
         with pytest.raises(TimeoutError):
             await RetryHandler.with_retry(func, max_retries=1)
         assert func.await_count == 1
+
+
+class TestWithCircuitBreaker:
+    """Coverage for ``RetryHandler.with_circuit_breaker``.
+
+    Previously untested — the harness's only circuit-breaker entry point.  The
+    tests below pin the CURRENT behaviour so a change to it is deliberate.
+    """
+
+    async def test_open_circuit_raises_before_calling_func(self) -> None:
+        """An already-open circuit short-circuits without invoking func."""
+        from src.harness.errors import CircuitBreakerOpenError
+
+        func = AsyncMock(return_value="ok")
+        with pytest.raises(CircuitBreakerOpenError):
+            await RetryHandler.with_circuit_breaker(
+                func, circuit_check=lambda: True,
+            )
+        assert func.await_count == 0
+
+    async def test_closed_circuit_calls_func(self) -> None:
+        func = AsyncMock(return_value="ok")
+        result = await RetryHandler.with_circuit_breaker(
+            func, circuit_check=lambda: False,
+        )
+        assert result == "ok"
+
+    async def test_retryable_failure_records_once(self) -> None:
+        """A retryable error that exhausts retries records exactly one failure.
+
+        Recording once per *call* (not per attempt) is what makes the breaker
+        threshold mean "N failing calls" rather than "N failing attempts".
+        """
+        recorded = []
+        func = AsyncMock(side_effect=httpx.ConnectError("down"))
+        with pytest.raises(httpx.ConnectError):
+            await RetryHandler.with_circuit_breaker(
+                func,
+                max_retries=3,
+                base_delay=0,
+                circuit_record_failure=lambda: recorded.append(1),
+            )
+        assert func.await_count == 3
+        assert len(recorded) == 1
+
+    async def test_non_retryable_failure_also_records(self) -> None:
+        """DOCUMENTS AN ASYMMETRY: non-retryable errors still count.
+
+        ``with_circuit_breaker`` catches bare ``Exception`` for the failure
+        record, while the retry loop only catches ``DEFAULT_RETRYABLE``.  So a
+        logic bug (KeyError, ValidationError, malformed LLM output) that is
+        never retried still advances the breaker toward opening — and because
+        one adapter instance is shared by all agents, a single buggy agent can
+        suspend LLM traffic fleet-wide for the recovery window.
+
+        Pinned deliberately: if this becomes "does not record", that is an
+        intentional behaviour change, not a silent regression.
+        """
+        recorded = []
+        func = AsyncMock(side_effect=KeyError("bad_field"))
+        with pytest.raises(KeyError):
+            await RetryHandler.with_circuit_breaker(
+                func,
+                max_retries=3,
+                base_delay=0,
+                circuit_record_failure=lambda: recorded.append(1),
+            )
+        assert func.await_count == 1          # never retried
+        assert len(recorded) == 1             # ...but still counted
+
+    async def test_no_check_or_record_callbacks_is_safe(self) -> None:
+        """Both callbacks are optional."""
+        func = AsyncMock(return_value="ok")
+        assert await RetryHandler.with_circuit_breaker(func) == "ok"
+
+        failing = AsyncMock(side_effect=httpx.ConnectError("x"))
+        with pytest.raises(httpx.ConnectError):
+            await RetryHandler.with_circuit_breaker(
+                failing, max_retries=1, base_delay=0,
+            )

@@ -525,3 +525,98 @@ class TestSearchQueryRewrite:
         svc._vector_index = object()  # enables the vector leg
         assert svc._rewrite_enabled is False
         assert svc._rewriter is None
+
+
+class TestFusionStrategyViaSearch:
+    """The fusion strategy must be honoured through ``search()``.
+
+    ``TestFusionMethodSelectable`` calls ``_merge_and_rank`` as a staticmethod
+    with ``method=`` passed explicitly, so it validates the merge maths but not
+    the *dispatch*: production calls it as
+    ``self._merge_and_rank(results, chroma_query, method=self.fusion_method,
+    k=self.fusion_k)``, where those are instance attributes set from
+    ``settings.hybrid_fusion_method`` (src/main.py:110).  A regression in that
+    wiring — or in which query string is passed — is invisible to those tests.
+
+    These drive ``search()`` with a configured instance, mirroring
+    ``TestSearchResultCache`` in this file.
+    """
+
+    @staticmethod
+    def _svc_with_two_legs(fusion: str):
+        """A service whose chroma and neo4j legs both return known hits."""
+        from unittest.mock import AsyncMock
+
+        svc = RAGRetrievalService()
+        svc._vector_index = object()  # enables the vector leg
+        svc.fusion_method = fusion
+        svc._kp_repo = object()  # enables the neo4j leg
+
+        async def fake_chroma(query, top_k):
+            # Only the chroma leg sees the (possibly rewritten/expanded) query.
+            return [_make_result("kp-chroma", "chroma", score=0.9)]
+
+        async def fake_neo4j(query, top_k):
+            return [_make_result("kp-neo4j", "neo4j", score=0.8)]
+
+        svc._chroma_search = fake_chroma          # type: ignore[assignment]
+        svc._neo4j_search = AsyncMock(side_effect=fake_neo4j)
+        return svc
+
+    async def test_search_uses_instance_fusion_method(self) -> None:
+        """The configured strategy is the one applied (not the class default)."""
+        from unittest.mock import patch
+
+        svc = self._svc_with_two_legs("minmax")
+        with patch.object(
+            RAGRetrievalService, "_merge_and_rank", autospec=True,
+            return_value=[],
+        ) as spy:
+            await svc.search("什么是栈", top_k=5)
+
+        assert spy.called, "merge was never reached through search()"
+        assert spy.call_args.kwargs["method"] == "minmax", (
+            "search() must pass the instance's fusion_method"
+        )
+
+    async def test_search_passes_instance_fusion_k(self) -> None:
+        svc = self._svc_with_two_legs("rrf")
+        svc.fusion_k = 17
+        from unittest.mock import patch
+
+        with patch.object(
+            RAGRetrievalService, "_merge_and_rank", autospec=True,
+            return_value=[],
+        ) as spy:
+            await svc.search("什么是栈", top_k=5)
+        assert spy.call_args.kwargs["k"] == 17
+
+    async def test_both_legs_contribute_results(self) -> None:
+        """Both recall paths reach the merge — neither is silently skipped."""
+        svc = self._svc_with_two_legs("rrf")
+        results = await svc.search("什么是栈", top_k=5)
+        ids = {r.source_id for r in results}
+        assert ids == {"kp-chroma", "kp-neo4j"}, ids
+
+    async def test_default_fusion_is_rrf(self) -> None:
+        """A fresh service defaults to RRF (the documented default)."""
+        svc = RAGRetrievalService()
+        assert svc.fusion_method == "rrf"
+
+    async def test_neo4j_leg_receives_original_query_not_rewritten(self) -> None:
+        """The keyword leg must get the user's real words, not a rewrite.
+
+        ``_neo4j_search`` matches on exact names, so a rewritten query would
+        break precise matching for knowledge-point names.
+        """
+        svc = self._svc_with_two_legs("rrf")
+        from unittest.mock import AsyncMock
+
+        svc._rewriter = AsyncMock()
+        svc._rewriter.rewrite = AsyncMock(return_value="REWRITTEN")
+        svc._rewrite_enabled = True
+
+        await svc.search("原始查询", top_k=5)
+
+        # chroma leg (via _chroma_search) may see the rewrite; neo4j must not.
+        assert svc._neo4j_search.call_args.args[0] == "原始查询"

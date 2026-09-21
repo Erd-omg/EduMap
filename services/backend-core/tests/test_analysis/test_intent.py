@@ -234,3 +234,94 @@ async def test_cache_evicts_on_lru_overflow():
     for i in range(600):
         small_cache.put((f"user", f"msg{i}"), "x")
     assert len(small_cache._store) <= 512
+
+
+# ── Real endpoint: GET /api/v1/analysis/stream/{user_id} ────────────────
+#
+# Every test above calls classify_intent() with a hand-built request and a
+# hand-supplied `has_topic`.  That leaves the wiring in the endpoint untested:
+# src/analysis/router.py:349 computes `has_topic = bool(_extract_topics(msg))`
+# and passes it down, then emits the classification as an SSE `intent` event.
+# A divergence between _extract_topics and the rule vote — or a regression in
+# the SSE contract the frontend reads — is invisible to the unit tests.
+
+
+class TestAnalysisStreamEndpoint:
+    """Drive the real SSE endpoint, not classify_intent() directly."""
+
+    @staticmethod
+    def _collect_sse_events(message: str) -> list[dict]:
+        """GET the stream endpoint and parse its SSE frames."""
+        import json
+
+        from fastapi.testclient import TestClient
+
+        from tests.test_api.conftest import _create_test_app
+
+        app = _create_test_app()
+        with TestClient(app) as client:
+            with client.stream(
+                "GET",
+                "/api/v1/analysis/stream/u-test",
+                params={"message": message},
+            ) as resp:
+                assert resp.status_code == 200
+                events, current = [], {}
+                for raw in resp.iter_lines():
+                    line = raw if isinstance(raw, str) else raw.decode()
+                    if line.startswith("event: "):
+                        current["event"] = line[len("event: "):]
+                    elif line.startswith("data: "):
+                        current["data"] = json.loads(line[len("data: "):])
+                    elif line == "" and current:
+                        events.append(current)
+                        current = {}
+        return events
+
+    def test_intent_event_is_emitted_first(self) -> None:
+        """The stream must lead with an `intent` event (frontend contract)."""
+        events = self._collect_sse_events("什么是时间复杂度？")
+        assert events, "no SSE events emitted"
+        assert events[0]["event"] == "intent"
+
+    def test_intent_event_carries_classification_fields(self) -> None:
+        """SSE payload shape the frontend's IntentBadge reads."""
+        events = self._collect_sse_events("什么是时间复杂度？")
+        payload = events[0]["data"]
+        for field in ("intent", "confidence", "path", "votes"):
+            assert field in payload, f"missing {field!r} in intent event"
+
+    def test_pure_question_routes_to_mentor(self) -> None:
+        """A clear knowledge question must classify as `question`."""
+        events = self._collect_sse_events("什么是时间复杂度？")
+        assert events[0]["data"]["intent"] == "question"
+
+    def test_self_disclosure_routes_to_profile(self) -> None:
+        """Pure background disclosure must classify as `profile`."""
+        events = self._collect_sse_events("我是计算机专业大三的学生")
+        assert events[0]["data"]["intent"] == "profile"
+
+    def test_disclosure_plus_question_routes_to_mixed(self) -> None:
+        """THE regression the fused classifier was built for.
+
+        Previously mis-routed to profile-only, which swallowed the question.
+        """
+        events = self._collect_sse_events(
+            "我学过链表，请问什么是二叉树？"
+        )
+        assert events[0]["data"]["intent"] == "mixed"
+
+    def test_has_topic_is_derived_from_message_not_assumed(self) -> None:
+        """End-to-end: `has_topic` comes from _extract_topics on the real text.
+
+        A self-disclosure naming a subject must NOT become `mixed` just
+        because a topic keyword appears — `mixed` requires an interrogative.
+        This is the link the unit tests bypass by passing has_topic by hand.
+        """
+        events = self._collect_sse_events("我学过 Python 和一点数据结构")
+        assert events[0]["data"]["intent"] == "profile"
+
+    def test_stream_terminates_with_complete(self) -> None:
+        """The stream must end, not hang (terminal-event invariant)."""
+        events = self._collect_sse_events("什么是时间复杂度？")
+        assert events[-1]["event"] in ("complete", "error")

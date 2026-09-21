@@ -960,3 +960,154 @@ class TestHandleToolCalls:
         )
         assert [r["tool"] for r in results] == ["counting_tool", "other_tool"]
         assert counter.calls == 1
+
+
+class TestToolCallsReachExecutionReport:
+    """Integration: the whole tool path, not just the parser.
+
+    ``TestHandleToolCalls`` above proves the mixin parses ``!tool:`` syntax on a
+    raw string.  That leaves the *productive* wiring untested, and this chain
+    has broken twice at integration level:
+
+    1. ``registry.execute()`` was missing an ``await`` — no tool ever ran and
+       the "result" was an unserialisable coroutine.
+    2. ``BaseAgent`` never inherited ``ToolInjectionMixin``, so
+       ``_handle_tool_calls`` did not exist on any agent.
+
+    Neither was visible to a unit test of the parser.  These tests exercise the
+    real path: LLM emits ``!tool:`` → ``PlannerAgent._gather_tool_context``
+    parses+executes → ``_last_tool_calls`` is set → ``BaseAgent.execute`` copies
+    it onto ``ExecutionReport.tool_calls`` → JSON-serialisable for SSE.
+    """
+
+    class _EchoTool(BaseTool):
+        @property
+        def spec(self) -> ToolSpec:
+            return ToolSpec(
+                name="echo",
+                description="Echoes its argument",
+                parameters=[
+                    ToolParameter(name="q", type="string", required=True),
+                ],
+            )
+
+        async def execute(self, q: str = "", **_kw) -> ToolResult:
+            return ToolResult(success=True, output=f"echo:{q}")
+
+    class _ToolEmittingLLM:
+        """First generate() emits !tool: syntax; later calls return plain text."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self._last_usage: dict = {}
+
+        async def generate(self, prompt, system_prompt=None, **kw):
+            from src.utils.llm_adapter import LLMResponse
+
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(content="!tool:echo(q=hello)", model="m")
+            return LLMResponse(content="无需工具", model="m")
+
+        async def generate_structured(self, prompt, schema, system_prompt=None, **kw):
+            from src.agents.planner.agent import _PlannerLLMOutput
+
+            # run() expects the parsed schema object, not a raw LLMResponse.
+            return _PlannerLLMOutput(
+                primary_kp_id="kp-1", knowledge_units=[], content_types=[],
+                summary="ok",
+            )
+
+    @staticmethod
+    def _build_agent():
+        from src.agents.planner.agent import PlannerAgent
+        from src.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register(TestToolCallsReachExecutionReport._EchoTool())
+        llm = TestToolCallsReachExecutionReport._ToolEmittingLLM()
+        return PlannerAgent(llm_adapter=llm, kp_repo=None, tool_registry=registry), llm, registry
+
+    async def test_tool_actually_executes_and_returns_real_output(self) -> None:
+        """The tool runs and its output is returned — not an un-awaited coroutine."""
+        agent, llm, registry = self._build_agent()
+        context = await agent._gather_tool_context(
+            llm, "plan something", registry.build_prompt_block()
+        )
+        assert "echo:hello" in context
+        assert agent._last_tool_calls, "_last_tool_calls was not set"
+
+    async def test_tool_call_carries_telemetry_fields(self) -> None:
+        """Each record carries the fields the trace panel renders."""
+        agent, llm, registry = self._build_agent()
+        await agent._gather_tool_context(llm, "x", registry.build_prompt_block())
+        (call,) = agent._last_tool_calls
+        for field in ("tool", "args", "success", "output", "duration_ms"):
+            assert field in call, f"missing {field!r}"
+        assert call["tool"] == "echo"
+        assert call["success"] is True
+
+    async def test_tool_calls_are_json_serialisable(self) -> None:
+        """Regression guard for the un-awaited-coroutine bug.
+
+        The un-fixed version produced
+        ``TypeError: Object of type coroutine is not JSON serializable``
+        when the telemetry was streamed to the client.
+        """
+        import json
+
+        agent, llm, registry = self._build_agent()
+        await agent._gather_tool_context(llm, "x", registry.build_prompt_block())
+        json.dumps(agent._last_tool_calls)  # must not raise
+
+    async def test_execute_surfaces_tool_calls_on_report(self) -> None:
+        """BaseAgent.execute() must copy them onto ExecutionReport.tool_calls.
+
+        This is the hop the SSE/trace panel depends on — and the one that was
+        silently dead while ``BaseAgent`` lacked the mixin.  Drives the real
+        ``execute()`` so the ``_last_tool_calls`` → ``report.tool_calls``
+        transfer in ``base.py`` is exercised rather than simulated.
+        """
+        from src.harness.types import AgentInput
+        from src.prompts import PromptRegistry
+
+        PromptRegistry.load()  # execute() -> run() reads the planner prompt
+
+        agent, _llm, _registry = self._build_agent()
+        report = await agent.execute(AgentInput(task_input="plan x", user_id="u1"))
+
+        assert report.success, report.error
+        assert isinstance(report.tool_calls, list)
+        # run() calls _gather_tool_context internally, so a tool WAS invoked.
+        assert agent._last_tool_calls, "tool round did not run"
+        assert report.tool_calls == agent._last_tool_calls
+        assert report.tool_calls[0]["tool"] == "echo"
+
+    async def test_no_tool_call_yields_no_context(self) -> None:
+        """When the model asks for no tool, the context block is empty."""
+        agent, llm, registry = self._build_agent()
+        llm.calls = 99  # force the "无需工具" branch
+        context = await agent._gather_tool_context(
+            llm, "x", registry.build_prompt_block()
+        )
+        assert context == ""
+
+    async def test_tool_failure_does_not_break_the_round(self) -> None:
+        """A failing tool degrades to text; it must not raise out of run()."""
+        agent, llm, registry = self._build_agent()
+
+        class _BoomTool(BaseTool):
+            @property
+            def spec(self) -> ToolSpec:
+                return ToolSpec(name="echo", description="d")
+
+            async def execute(self, **_kw) -> ToolResult:
+                raise RuntimeError("tool exploded")
+
+        registry.register(_BoomTool())
+        context = await agent._gather_tool_context(
+            llm, "x", registry.build_prompt_block()
+        )
+        # The registry converts the exception into a failed ToolResult, so the
+        # round completes and reports the failure rather than propagating.
+        assert "失败" in context or "exploded" in context

@@ -1251,3 +1251,43 @@ class TestMemoryDBPool:
         db = MemoryDBPool(dsn="postgresql://u:p@localhost/db")
         db.pool = None
         await db.close()  # should not raise
+
+
+class TestRedisUnavailableFallbackSelection:
+    """The fallback must be *selected* when Redis is unreachable.
+
+    ``test_in_memory_fallback_*`` above proves the fallback object works, but
+    not that it gets chosen — and the orchestrator depends on that choice being
+    automatic (src/agents/orchestrator/router.py:109 notes it "should not
+    happen" that short-term memory is missing).  This drives the real
+    ``_init_memory`` with an unreachable Redis.
+    """
+
+    async def test_init_memory_falls_back_and_stays_usable(self) -> None:
+        from unittest.mock import patch
+
+        from src import main as main_module
+
+        class _FakeApp:
+            def __init__(self):
+                self.state = type("S", (), {})()
+
+        class _FakePool:
+            async def create(self):
+                return None
+
+        app = _FakeApp()
+        # Port 1 is reliably closed, so redis ping() fails fast.
+        with patch.object(main_module.settings, "redis_url", "redis://127.0.0.1:1/0"):
+            with patch("src.memory.db.MemoryDBPool", return_value=_FakePool()):
+                ops = await main_module._init_memory(app)
+
+        st = ops.short_term
+        # Fallback engaged, and it is actually usable for the session
+        # create/read cycle the orchestrator performs.
+        await st.create_session(
+            session_id="s1", user_id="u1", metadata={"k": "v"}
+        )
+        session = await st.get_session("s1")
+        assert session is not None
+        assert session.metadata.get("k") == "v"
