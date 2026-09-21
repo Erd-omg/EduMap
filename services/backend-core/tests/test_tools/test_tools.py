@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.harness.mixins import ToolInjectionMixin
 from src.tools.base import BaseTool, ToolParameter, ToolResult, ToolSpec
 from src.tools.builtin.forgetting_check import ForgettingCheckTool
 from src.tools.builtin.kg_search import KGTool
@@ -793,3 +794,169 @@ class TestForgettingCheckTool:
 
         assert result.success is False
         assert "Forgetting curve service crashed" in result.error
+
+
+class _DelayedTestTool(BaseTool):
+    """Tool that awaits a short delay — exercises the real async timeout path."""
+
+    def __init__(self, delay: float = 0.01) -> None:
+        self._delay = delay
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(name="delayed_tool", description="A slightly slow tool")
+
+    async def execute(self, **kwargs) -> ToolResult:
+        import asyncio
+
+        await asyncio.sleep(self._delay)
+        return ToolResult(success=True, output="delayed ok")
+
+
+class _SlowTestTool(BaseTool):
+    """Tool that sleeps past any reasonable timeout."""
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(name="slow_tool", description="A deliberately slow tool")
+
+    async def execute(self, **kwargs) -> ToolResult:
+        import asyncio
+
+        await asyncio.sleep(30)
+        return ToolResult(success=True, output="never reached")
+
+
+class _CountingTestTool(BaseTool):
+    """Records how many times it was actually invoked."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(name="counting_tool", description="Counts invocations")
+
+    async def execute(self, **kwargs) -> ToolResult:
+        self.calls += 1
+        return ToolResult(success=True, output=f"call #{self.calls}")
+
+
+class TestToolExecutionTimeout:
+    """A slow tool must not stall the pipeline."""
+
+    async def test_slow_tool_times_out(self) -> None:
+        registry = ToolRegistry(timeout_seconds=0.05)
+        registry.register(_SlowTestTool())
+
+        result = await registry.execute("slow_tool")
+
+        assert result.success is False
+        assert "timed out" in (result.error or "")
+
+    async def test_async_tool_finishing_within_timeout_succeeds(self) -> None:
+        """A tool that genuinely awaits but finishes in time must still succeed.
+
+        Uses a tool with a real ``await`` — otherwise the timeout wrapper is
+        never given a chance to fire and the assertion proves nothing.
+        """
+        registry = ToolRegistry(timeout_seconds=5.0)
+        registry.register(_DelayedTestTool(delay=0.05))
+
+        result = await registry.execute("delayed_tool")
+
+        assert result.success is True
+        assert result.output == "delayed ok"
+
+    async def test_timeout_is_actually_enforced(self) -> None:
+        """Removing the wait_for wrapper must break this test.
+
+        Asserts bounded elapsed time, so a regression that drops the timeout
+        (letting a slow tool run to completion) is caught rather than silently
+        passing.
+        """
+        import time
+
+        registry = ToolRegistry(timeout_seconds=0.05)
+        registry.register(_SlowTestTool())
+
+        started = time.perf_counter()
+        result = await registry.execute("slow_tool")
+        elapsed = time.perf_counter() - started
+
+        assert result.success is False
+        assert elapsed < 5.0, f"timeout not enforced — tool ran for {elapsed:.1f}s"
+
+
+class TestHandleToolCalls:
+    """ToolInjectionMixin._handle_tool_calls — parsing + real execution.
+
+    These guard the bug where ``registry.execute`` (a coroutine) was called
+    without ``await``: the tool never ran, and the "result" was an
+    un-awaited coroutine that could not be serialised.
+    """
+
+    class _Agent(ToolInjectionMixin):
+        def __init__(self, registry) -> None:
+            self._tool_registry = registry
+
+    async def test_tools_actually_execute(self) -> None:
+        registry = ToolRegistry()
+        counter = _CountingTestTool()
+        registry.register(counter)
+        agent = self._Agent(registry)
+
+        results = await agent._handle_tool_calls("!tool:counting_tool()")
+
+        assert counter.calls == 1, "the tool must actually be invoked (await was missing)"
+        assert len(results) == 1
+        assert results[0]["tool"] == "counting_tool"
+        assert results[0]["success"] is True
+        assert results[0]["output"] == "call #1"
+
+    async def test_results_are_json_serialisable(self) -> None:
+        """Results go onto ExecutionReport → SSE → JSON, so they must serialise."""
+        import json
+
+        registry = ToolRegistry()
+        registry.register(_ConcreteTestTool())
+        agent = self._Agent(registry)
+
+        results = await agent._handle_tool_calls("!tool:test_tool(input=hello)")
+
+        payload = json.dumps(results)  # raises TypeError if not serialisable
+        assert "test_tool" in payload
+        assert results[0]["args"] == {"input": "hello"}
+
+    async def test_missing_registry_returns_empty(self) -> None:
+        agent = self._Agent(None)
+        assert await agent._handle_tool_calls("!tool:test_tool()") == []
+
+    async def test_unknown_tool_is_reported_not_raised(self) -> None:
+        registry = ToolRegistry()
+        agent = self._Agent(registry)
+
+        results = await agent._handle_tool_calls("!tool:nope()")
+        assert len(results) == 1
+        assert results[0]["success"] is False
+        assert "Unknown tool" in (results[0]["error"] or "")
+
+    async def test_no_tool_syntax_yields_nothing(self) -> None:
+        registry = ToolRegistry()
+        registry.register(_ConcreteTestTool())
+        agent = self._Agent(registry)
+
+        assert await agent._handle_tool_calls("就是一段普通回答，没有工具调用") == []
+
+    async def test_multiple_calls_all_execute(self) -> None:
+        registry = ToolRegistry()
+        counter = _CountingTestTool()
+        registry.register(counter)
+        registry.register(_OtherTestTool())
+        agent = self._Agent(registry)
+
+        results = await agent._handle_tool_calls(
+            "先 !tool:counting_tool() 再 !tool:other_tool()"
+        )
+        assert [r["tool"] for r in results] == ["counting_tool", "other_tool"]
+        assert counter.calls == 1

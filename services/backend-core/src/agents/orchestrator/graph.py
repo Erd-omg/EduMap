@@ -76,13 +76,23 @@ async def planner_node(state: EduMapState) -> dict:
         return _error_state("planner", report.error or "Unknown planner error")
 
     result: PlannerOutput = report.output
+    # NOTE: ``_report`` must be NESTED inside the agent's own entry.  It used to
+    # be a sibling key of ``planner``, so it was clobbered by whichever agent
+    # ran next and could never be read back as ``agent_results.planner._report``
+    # (which is what /status consumers — and the trace panel — expect).
     return {
         "current_phase": "EXTRACT",
-        "agent_results": {"planner": result.model_dump(), "_report": {
-            "duration_ms": report.duration_ms,
-            "retries": report.retries,
-            "memory_context_loaded": report.memory_context_loaded,
-        }},
+        "agent_results": {
+            "planner": {
+                **result.model_dump(),
+                "_report": {
+                    "duration_ms": report.duration_ms,
+                    "retries": report.retries,
+                    "memory_context_loaded": report.memory_context_loaded,
+                    "tool_calls": report.tool_calls,
+                },
+            },
+        },
         "generation_plan": result.plan.model_dump() if result.plan else None,
         "knowledge_units": [ku.model_dump() for ku in result.plan.knowledge_units],
     }

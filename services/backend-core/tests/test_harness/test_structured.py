@@ -217,3 +217,63 @@ class TestJsonSchema:
         assert "required" in json_schema
         assert "name" in json_schema["required"]
         assert "age" in json_schema["required"]
+
+
+class ListPayload(BaseModel):
+    """List-of-objects schema, mirroring planner-style payloads."""
+
+    knowledge_units: list[dict] = Field(default_factory=list)
+    summary: str = ""
+
+
+class TestTruncatedResponseRecovery:
+    """A response cut off at the token cap must not fail the whole call.
+
+    Real failure (seen from DeepSeek at max_tokens=2048): the JSON ends
+    mid-object, e.g. ``..., "key_conce`` — previously a hard JSONDecodeError
+    that failed the entire planner step.
+    """
+
+    @staticmethod
+    def _schema() -> "OutputSchema":
+        from src.harness.structured import OutputSchema
+
+        return OutputSchema(ListPayload)
+
+    def test_recovers_complete_elements_from_mid_object_truncation(self) -> None:
+        schema = self._schema()
+        truncated = (
+            '{"knowledge_units": ['
+            '{"id": "kp-a", "name": "排序基础"},'
+            '{"id": "kp-b", "name": "快排", "key_conce'
+        )
+        out = schema.parse(truncated)
+        assert len(out.knowledge_units) == 2
+        assert out.knowledge_units[0]["id"] == "kp-a"
+
+    def test_recovers_when_truncated_mid_string_value(self) -> None:
+        schema = self._schema()
+        truncated = '{"knowledge_units": [{"id": "a"}], "summary": "被截断的'
+        out = schema.parse(truncated)
+        assert out.knowledge_units == [{"id": "a"}]
+
+    def test_recovers_from_trailing_comma(self) -> None:
+        schema = self._schema()
+        out = schema.parse('{"knowledge_units": [{"id": "a"}, {"id": "b"},')
+        assert len(out.knowledge_units) == 2
+
+    def test_valid_json_is_unaffected(self) -> None:
+        schema = self._schema()
+        out = schema.parse('{"knowledge_units": [{"id": "a"}], "summary": "ok"}')
+        assert out.summary == "ok"
+
+    def test_unrecoverable_garbage_still_raises(self) -> None:
+        schema = self._schema()
+        with pytest.raises(json.JSONDecodeError):
+            schema.parse("this is not json at all")
+
+    def test_repair_returns_none_for_hopeless_input(self) -> None:
+        from src.harness.structured import OutputSchema
+        assert OutputSchema._repair_truncated("nonsense") is None
+        from src.harness.structured import OutputSchema
+        assert OutputSchema._repair_truncated("") is None

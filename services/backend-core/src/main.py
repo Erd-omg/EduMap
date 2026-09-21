@@ -50,9 +50,8 @@ async def lifespan(app: FastAPI):
     memory_ops = await _init_memory(app)
     app.state.memory_ops = memory_ops
 
-    # ── Tool registry ─────────────────────────────────────────────────────
-    tool_registry = _init_tools()
-    app.state.tool_registry = tool_registry
+    # (Tool registry is initialized further down, once kp_repo / rag_service /
+    #  forgetting_service exist — the tools need real dependencies.)
 
     # ── Extract DB pool from memory system (used by multiple services) ────
     memory_db_pool_inner = getattr(memory_ops.long_term, '_db', None)
@@ -126,8 +125,40 @@ async def lifespan(app: FastAPI):
         rag_service._reranker = reranker
         logging.info("Reranker enabled for RAG retrieval")
 
+    # ── LLM query rewrite (default off — negative result on the eval set) ──
+    if settings.rag_rewrite_enabled:
+        from src.rag.query_rewrite import QueryRewriter
+
+        rag_service._rewriter = QueryRewriter(
+            llm, timeout_seconds=settings.rag_rewrite_timeout
+        )
+        rag_service._rewrite_enabled = True
+        logging.info("LLM query rewrite enabled for RAG retrieval")
+
+    # ── Retrieval result cache ─────────────────────────────────────────────
+    if settings.rag_cache_enabled:
+        rag_service.enable_result_cache(
+            maxsize=settings.rag_cache_size,
+            ttl_seconds=settings.rag_cache_ttl_seconds,
+        )
+        logging.info(
+            "RAG result cache enabled (size=%d, ttl=%ds)",
+            settings.rag_cache_size,
+            settings.rag_cache_ttl_seconds,
+        )
+
     mentor_agent = MentorAgent(llm_adapter=llm, rag_service=rag_service)
     app.state.mentor_agent = mentor_agent
+
+    # ── Tool registry ─────────────────────────────────────────────────────
+    # Built here (not at the top of the lifespan) because the tools need the
+    # real KP repo / RAG service / forgetting service as dependencies.
+    tool_registry = _init_tools(
+        kp_repo=kp_repo,
+        rag_service=rag_service,
+        forgetting_service=forgetting_service,
+    )
+    app.state.tool_registry = tool_registry
 
     # ── Configure agents + orchestrator graph ───────────────────────────
     _configure_agents(app, pool, llm)
@@ -235,18 +266,30 @@ async def _init_memory(app: FastAPI):
     return memory_ops
 
 
-def _init_tools():
-    """Initialize and register built-in tools."""
+def _init_tools(kp_repo=None, rag_service=None, forgetting_service=None):
+    """Initialize and register built-in tools.
+
+    Tools are constructed with their real dependencies — constructing them
+    bare (``KGTool()``) left every tool returning "dependency unavailable",
+    so a tool call could never produce a useful result.
+    """
     from src.tools.registry import ToolRegistry
     registry = ToolRegistry()
 
     # Register built-in tools
     try:
+        from src.tools.builtin.forgetting_check import ForgettingCheckTool
         from src.tools.builtin.kg_search import KGTool
         from src.tools.builtin.resource_search import ResourceSearchTool
-        registry.register(KGTool())
-        registry.register(ResourceSearchTool())
-        logging.info("Tool registry initialized with %d tools", len(registry.list_tools()))
+
+        registry.register(KGTool(kp_repo=kp_repo))
+        registry.register(ResourceSearchTool(rag_service=rag_service))
+        registry.register(ForgettingCheckTool(forgetting_service=forgetting_service))
+        logging.info(
+            "Tool registry initialized with %d tools: %s",
+            len(registry.list_tools()),
+            registry.list_tools(),
+        )
     except Exception as exc:
         logging.warning("Failed to register built-in tools: %s", exc)
 

@@ -11,7 +11,6 @@ import logging
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from src.harness.base import BaseAgent
-from src.harness.mixins import MemoryAwareMixin, ToolInjectionMixin
 from src.harness.types import AgentConfig, AgentInput
 from src.rag.models import MentorResponse, MentorSource
 from src.rag.rag_service import RAGRetrievalService
@@ -41,8 +40,12 @@ def _format_conversation_history(history: list[dict] | None) -> str:
     return formatted if formatted else "（暂无对话历史）"
 
 
-class MentorAgent(BaseAgent, MemoryAwareMixin, ToolInjectionMixin):
-    """RAG-constrained learning Q&A agent."""
+class MentorAgent(BaseAgent):
+    """RAG-constrained learning Q&A agent.
+
+    ``ToolInjectionMixin`` / ``MemoryAwareMixin`` are inherited via ``BaseAgent``;
+    listing them again here would be redundant (and creates an MRO conflict).
+    """
 
     def __init__(
         self,

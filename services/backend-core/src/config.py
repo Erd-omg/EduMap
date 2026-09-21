@@ -1,4 +1,24 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+# services/backend-core/src/config.py → parents[3] is the monorepo root.
+_SERVICE_DIR = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _resolve_env_file() -> str:
+    """Locate the .env file independent of the current working directory.
+
+    Preference order: the service directory, then the monorepo root.  Returns
+    the first path that exists, or ``".env"`` (pydantic's default) if neither
+    does, so behaviour is unchanged when no .env is present at all.
+    """
+    candidates = (_SERVICE_DIR / ".env", _REPO_ROOT / ".env")
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return ".env"
 
 
 class Settings(BaseSettings):
@@ -57,6 +77,23 @@ class Settings(BaseSettings):
     expand_query_enabled: bool = False
     expand_query_max_terms: int = 5
 
+    # ── LLM Query Rewrite ───────────────────────────────────────────────────
+    # 默认关闭，依据实测：n=20 评测集上 LLM 改写把 MRR 从 0.9056 降到 0.825
+    # （−0.08），平均延迟从 38ms 涨到 1546ms（×9.8）。改写对"教科书式问法"
+    # 的评测集是负收益——原句的语义结构反而被拆成了关键词。
+    # 保留开关以便后续在"多轮指代"场景（"它和上一个有什么区别"）重测，
+    # 那类查询必须结合短期记忆才有意义。
+    # 复现：scripts/run_strategy_comparison.py --strategies direct,hybrid,rewrite
+    rag_rewrite_enabled: bool = False
+    rag_rewrite_timeout: float = 8.0
+
+    # ── Retrieval result cache ──────────────────────────────────────────────
+    # 对同一 (query, top_k) 的检索结果做 TTL 缓存，降低重复检索开销。
+    # 知识更新的一致性由 TTL 兜底（默认 5 分钟）。
+    rag_cache_enabled: bool = True
+    rag_cache_ttl_seconds: int = 300
+    rag_cache_size: int = 256
+
     # ── Memory ─────────────────────────────────────────────────────────────
     session_ttl_hours: int = 1
     max_conversation_turns: int = 50
@@ -67,7 +104,18 @@ class Settings(BaseSettings):
     # 显式覆盖为 http://profile-service:8001。
     profile_service_base: str = "http://localhost:8001"
 
-    model_config = {"env_prefix": "", "case_sensitive": False, "env_file": ".env", "extra": "ignore"}
+    # ``env_file`` is resolved relative to the *current working directory*,
+    # which silently breaks: the repo's only .env lives at the monorepo root,
+    # but every script's usage says ``cd services/backend-core``.  Running from
+    # the service directory used to fall back to defaults — llm_model="spark"
+    # with no API key — i.e. a MOCK LLM returning canned text, while benchmarks
+    # still printed plausible-looking tables.  Search both locations explicitly.
+    model_config = {
+        "env_prefix": "",
+        "case_sensitive": False,
+        "env_file": _resolve_env_file(),
+        "extra": "ignore",
+    }
 
 
 settings = Settings()

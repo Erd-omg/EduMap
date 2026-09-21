@@ -81,8 +81,98 @@ class OutputSchema:
             data = json.loads(raw)
             return self.model.model_validate(data)
         except (json.JSONDecodeError, ValidationError) as exc:
+            # A response cut off at the token cap yields JSON that ends
+            # mid-object ("Expecting property name enclosed in double
+            # quotes").  This is common when the model runs long, so try to
+            # salvage the complete leading elements before giving up.
+            repaired = self._repair_truncated(raw)
+            if repaired is not None:
+                try:
+                    logger.warning(
+                        "OutputSchema.parse recovered a truncated %s response",
+                        self.schema_id,
+                    )
+                    return self.model.model_validate(repaired)
+                except ValidationError:
+                    pass
+
             logger.warning(
                 "OutputSchema.parse failed for %s: %s\nRaw: %.200s",
                 self.schema_id, exc, text,
             )
             raise
+
+    @staticmethod
+    def _repair_truncated(raw: str) -> dict | None:
+        """Salvage a JSON object that was truncated mid-way.
+
+        Strategy: scan once, tracking string state and bracket depth, and
+        remember the position after each *completed* value at every depth.
+        Then cut at the deepest point that still yields a balanced structure
+        and close the remaining containers.
+
+        Returns the parsed dict, or None when the text is too broken to fix.
+        """
+        stack: list[str] = []          # open brackets, in order
+        in_string = False
+        escaped = False
+        # All positions (exclusive) immediately after a completed value, in order.
+        boundaries: list[int] = []
+
+        for i, ch in enumerate(raw):
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                    boundaries.append(i + 1)
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch in "{[":
+                stack.append(ch)
+            elif ch in "}]":
+                if not stack:
+                    break
+                stack.pop()
+                boundaries.append(i + 1)
+
+        if not stack:
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return None
+
+        # Try the most recent completed value first; walk backwards until the
+        # remaining text parses after closing the still-open containers.
+        for end in sorted(boundaries, reverse=True):
+            candidate = raw[:end].rstrip().rstrip(",")
+            # Recompute what is still open at this cut point.
+            open_stack: list[str] = []
+            in_str = False
+            esc = False
+            for ch in candidate:
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
+                    continue
+                if ch == '"':
+                    in_str = True
+                elif ch in "{[":
+                    open_stack.append(ch)
+                elif ch in "}]" and open_stack:
+                    open_stack.pop()
+            closers = "".join(
+                "}" if b == "{" else "]" for b in reversed(open_stack)
+            )
+            try:
+                return json.loads(candidate + closers)
+            except json.JSONDecodeError:
+                continue
+        return None

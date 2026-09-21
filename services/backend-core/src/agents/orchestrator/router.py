@@ -425,27 +425,39 @@ async def _run_generation(session_id: str, request: Request) -> None:
                             state[key] = value
                 for node_name in step:
                     if node_name in phase_labels:
+                        # Carry the node's ``_report`` (duration, retries, tool
+                        # calls) so the client can render a per-agent trace
+                        # without a second /status round-trip.
+                        node_report = (
+                            (state.get("agent_results") or {})
+                            .get(node_name, {})
+                            .get("_report")
+                        )
                         await queue.put({
                             "type": "agent_complete",
                             "data": {
                                 "agent": node_name,
                                 "phase": phase_labels[node_name],
+                                "report": node_report or {},
                             },
                         })
                 # Persist live progress so GET /status can restore completed
                 # agents after a page refresh (the full final state is only
                 # written once at the end of the run).
+                #
+                # NOTE: ``update_metadata`` is a *shallow* merge, so
+                # ``orchestrator_state`` must be written as a COMPLETE snapshot.
+                # An earlier version wrote only {current_phase, overall_status,
+                # agent_results}, which wiped task_input / generated_resources /
+                # errors and replaced the real agent_results with bare
+                # {"status": "completed"} placeholders — so a refresh saw
+                # gutted state.
                 if short_term:
                     try:
+                        snapshot = dict(state)
+                        snapshot["overall_status"] = "running"
                         await short_term.update_metadata(session_id, {
-                            "orchestrator_state": {
-                                "current_phase": state.get("current_phase", ""),
-                                "overall_status": "running",
-                                "agent_results": {
-                                    n: {"status": "completed"}
-                                    for n in state.get("agent_results", {})
-                                },
-                            },
+                            "orchestrator_state": snapshot,
                         })
                     except Exception:
                         # Best-effort; a failed progress write must not kill

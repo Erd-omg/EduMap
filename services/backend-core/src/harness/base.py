@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from src.harness.errors import AgentError, ConfigurationError
+from src.harness.mixins import MemoryAwareMixin, ToolInjectionMixin
 from src.harness.observability import Timer, log_execution_report
 from src.harness.retry import RetryHandler
 from src.harness.types import AgentConfig, AgentInput, ExecutionReport
@@ -31,11 +32,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class BaseAgent(ABC):
+class BaseAgent(ToolInjectionMixin, MemoryAwareMixin, ABC):
     """Unified base class for all EduMap agents.
 
     Subclasses must implement ``run()``. They may override
     ``before_run()`` and ``after_run()`` for lifecycle hooks.
+
+    The tool/memory mixins are mixed in here (not per-agent) — they were
+    previously defined but never inherited, so ``_handle_tool_calls`` did not
+    exist on any agent and the whole tool layer was unreachable.
     """
 
     def __init__(
@@ -158,6 +163,13 @@ class BaseAgent(ABC):
             # Transfer LLM token usage from adapter into report
             if hasattr(self._llm, '_last_usage') and self._llm._last_usage:
                 report.token_usage = dict(self._llm._last_usage)
+
+            # Transfer tool calls recorded by the agent's run().  Agents stash
+            # them on ``_last_tool_calls`` (set by ToolInjectionMixin callers)
+            # because run() returns only the domain output object.
+            tool_calls = getattr(self, "_last_tool_calls", None)
+            if tool_calls:
+                report.tool_calls = list(tool_calls)
 
         except AgentError as exc:
             report.success = False

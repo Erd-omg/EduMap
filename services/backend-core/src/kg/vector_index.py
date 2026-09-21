@@ -29,10 +29,13 @@ class VectorIndex:
         self._chroma_collection = None
         self._client: Any = None  # chromadb.HttpClient or None (in-memory fallback)
 
-        # Try ChromaDB first, fall back to in-memory
+        # Try ChromaDB first, fall back to in-memory.  Retried a few times
+        # because a transient DNS/socket failure at process start would
+        # otherwise silently downgrade the whole index to an empty in-memory
+        # dict — retrieval then returns nothing while looking healthy.
         if _HAS_CHROMADB:
             try:
-                client = chromadb.HttpClient(host=host, port=port)
+                client = self._connect_with_retry(host, port)
                 self._client = client
                 self._chroma_collection = client.get_or_create_collection(
                     name=_COLLECTION_NAME,
@@ -43,12 +46,41 @@ class VectorIndex:
                     host, port, _COLLECTION_NAME,
                 )
             except Exception as exc:
+                # ``chromadb`` raises bare exceptions with an empty message, so
+                # log the type and a traceback — otherwise this is impossible to
+                # diagnose and the in-memory fallback silently fakes an empty index.
                 logger.warning(
-                    "ChromaDB unavailable (%s) — using in-memory fallback for VectorIndex",
-                    exc,
+                    "ChromaDB unavailable (%s: %r) — using in-memory fallback for "
+                    "VectorIndex. Any retrieval against this index is EMPTY.",
+                    type(exc).__name__,
+                    str(exc),
+                    exc_info=True,
                 )
         else:
             logger.warning("chromadb package not installed — using in-memory fallback")
+
+    @staticmethod
+    def _connect_with_retry(host: str, port: int, attempts: int = 3):
+        """Create an ``HttpClient``, retrying transient connect failures.
+
+        ChromaDB's client raises a bare ``ValueError`` (sometimes wrapping a
+        ``httpcore.ConnectError`` such as "nodename nor servname provided")
+        when the first connection races with process startup.  A short retry
+        turns that into a successful connect instead of a silent downgrade to
+        an empty in-memory index.
+        """
+        import time
+
+        last_exc: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return chromadb.HttpClient(host=host, port=port)
+            except Exception as exc:  # noqa: BLE001 - chromadb raises bare exceptions
+                last_exc = exc
+                if attempt < attempts:
+                    time.sleep(0.5 * attempt)
+        assert last_exc is not None
+        raise last_exc
 
     def upsert(
         self, kp_id: str, embedding: list[float], metadata: dict | None = None

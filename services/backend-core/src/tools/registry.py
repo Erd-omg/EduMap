@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -9,16 +10,23 @@ from src.tools.base import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TOOL_TIMEOUT_SECONDS = 5.0
+
 
 class ToolRegistry:
     """Registry for agent-callable tools.
 
     Tools are discovered by name and executed by the registry.
     The registry also provides a formatted prompt block for LLM injection.
+
+    Execution is guarded by a timeout so a slow or hung tool cannot stall the
+    whole agent pipeline; a timeout is reported as a failed ``ToolResult``
+    rather than propagating, matching how other tool errors are surfaced.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, timeout_seconds: float = DEFAULT_TOOL_TIMEOUT_SECONDS) -> None:
         self._tools: dict[str, BaseTool] = {}
+        self._timeout = timeout_seconds
 
     def register(self, tool: BaseTool) -> None:
         """Register a tool by its spec name."""
@@ -37,13 +45,20 @@ class ToolRegistry:
         return list(self._tools.keys())
 
     async def execute(self, name: str, **kwargs: Any) -> ToolResult:
-        """Execute a tool by name with provided arguments."""
+        """Execute a tool by name, bounded by the registry timeout."""
         tool = self._tools.get(name)
         if not tool:
             return ToolResult(success=False, error=f"Unknown tool: {name}")
         try:
             logger.debug("Executing tool: %s with args=%s", name, kwargs)
-            return await tool.execute(**kwargs)
+            return await asyncio.wait_for(
+                tool.execute(**kwargs), timeout=self._timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Tool %s timed out after %.1fs", name, self._timeout)
+            return ToolResult(
+                success=False, error=f"Tool '{name}' timed out after {self._timeout}s"
+            )
         except Exception as exc:
             logger.exception("Tool %s failed", name)
             return ToolResult(success=False, error=str(exc))

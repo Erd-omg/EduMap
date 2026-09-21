@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -23,11 +24,16 @@ class ToolInjectionMixin:
     after each LLM generation to process tool invocations.
     """
 
-    def _handle_tool_calls(self, text: str) -> list[dict[str, Any]]:
+    async def _handle_tool_calls(self, text: str) -> list[dict[str, Any]]:
         """Parse and execute tool calls embedded in LLM output.
 
-        Looks for ``!tool:name(key=value, ...)`` patterns.
-        Returns a list of tool-result dicts for enrichment.
+        Looks for ``!tool:name(key=value, ...)`` patterns.  Returns a list of
+        **JSON-serialisable** tool-result dicts, ready to be stored on
+        ``ExecutionReport.tool_calls`` and streamed to the client.
+
+        Note the ``await`` on ``registry.execute`` — it is a coroutine.  Missing
+        it silently returned an un-awaited coroutine, so no tool ever ran and the
+        "result" was unserialisable (which is why callers used to drop it).
         """
         registry: ToolRegistry | None = getattr(self, "_tool_registry", None)
         if not registry:
@@ -40,17 +46,29 @@ class ToolInjectionMixin:
             tool_name = match.group(1)
             args_str = match.group(2)
             args = self._parse_tool_args(args_str)
-            tool_result = registry.execute(tool_name, **(args or {}))
+
+            started = time.perf_counter()
+            tool_result = await registry.execute(tool_name, **(args or {}))
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+
             results.append({
                 "tool": tool_name,
                 "args": args,
-                "result": tool_result,
+                "success": bool(getattr(tool_result, "success", False)),
+                "output": str(getattr(tool_result, "output", ""))[:500],
+                "error": getattr(tool_result, "error", None),
+                "duration_ms": duration_ms,
             })
 
         if results:
             logger.info(
                 "Executed %d tool call(s): %s",
-                len(results), [r["tool"] for r in results],
+                len(results),
+                [
+                    {"tool": r["tool"], "success": r["success"],
+                     "duration_ms": r["duration_ms"]}
+                    for r in results
+                ],
             )
 
         return results

@@ -97,15 +97,19 @@ class SeedLoader:
 
     async def load_embeddings(
         self,
-        chroma_host: str = "chromadb",
-        chroma_port: int = 8000,
+        chroma_host: str | None = None,
+        chroma_port: int | None = None,
         embedding_model: str = "BAAI/bge-small-zh-v1.5",
     ) -> dict:
         """Generate and upsert ChromaDB embeddings for all KPs in Neo4j.
 
         Args:
-            chroma_host: ChromaDB hostname.
-            chroma_port: ChromaDB port.
+            chroma_host: ChromaDB hostname.  Defaults to ``settings.chroma_host``
+                (``localhost`` when running on the host).  The old hardcoded
+                default was ``"chromadb"`` — the Docker-internal service name —
+                which is unreachable from a host process and made this whole
+                seeding step fail silently.
+            chroma_port: ChromaDB port; defaults to ``settings.chroma_port``.
             embedding_model: Sentence-transformers model name.
 
         Returns:
@@ -134,6 +138,12 @@ class SeedLoader:
         except Exception as exc:
             logger.warning("Failed to load embedding model (%s) — skipping", exc)
             return {"status": "error", "reason": f"model load failed: {exc}"}
+
+        if chroma_host is None or chroma_port is None:
+            from src.config import settings
+
+            chroma_host = chroma_host or settings.chroma_host
+            chroma_port = chroma_port or settings.chroma_port
 
         vi = VectorIndex(host=chroma_host, port=chroma_port)
 

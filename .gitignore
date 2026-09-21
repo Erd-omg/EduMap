@@ -33,6 +33,9 @@ __pycache__/
 services/backend-core/uploads/
 services/backend-core/.coverage
 
+# Personal application materials (保研/申请用途，不属于项目源码)
+docs/保研材料/
+
 # Coverage
 coverage/
 .nyc_output/
