@@ -410,3 +410,165 @@ class TestFetchProfile:
 
         assert result is None
         assert any("Failed to fetch profile" in r.message for r in caplog.records)
+
+    def test_non_200_returns_none(self, monkeypatch):
+        """Any non-200 must degrade to None, not raise into the endpoint."""
+        import asyncio
+
+        import httpx
+
+        from src.learning_path.router import _fetch_profile
+
+        class _NotFound:
+            status_code = 404
+            headers = {"content-type": "application/json"}
+
+            @staticmethod
+            def json():
+                return {"detail": "not found"}
+
+        class _Client:
+            def __init__(self, timeout=None):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url):
+                return _NotFound()
+
+        monkeypatch.setattr(httpx, "AsyncClient", _Client)
+        assert asyncio.run(_fetch_profile("u-missing")) is None
+
+    def test_malformed_json_returns_none(self, monkeypatch):
+        """A non-JSON body must not escape as a parsing error.
+
+        ``json()`` on a truncated/garbage body raises, and the broad except is
+        the only thing keeping that out of the endpoint.
+        """
+        import asyncio
+        import json as _json
+
+        import httpx
+
+        from src.learning_path.router import _fetch_profile
+
+        class _Garbage:
+            status_code = 200
+            headers = {"content-type": "text/html"}
+
+            @staticmethod
+            def json():
+                raise _json.JSONDecodeError("Expecting value", "<html>", 0)
+
+        class _Client:
+            def __init__(self, timeout=None):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url):
+                return _Garbage()
+
+        monkeypatch.setattr(httpx, "AsyncClient", _Client)
+        assert asyncio.run(_fetch_profile("u1")) is None
+
+    def test_response_without_profile_key_returns_none(self, monkeypatch):
+        """A 200 whose body lacks 'profile' yields None, not a KeyError."""
+        import asyncio
+
+        import httpx
+
+        from src.learning_path.router import _fetch_profile
+
+        class _NoProfileKey:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"user_id": "u1"}  # no "profile" key
+
+        class _Client:
+            def __init__(self, timeout=None):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url):
+                return _NoProfileKey()
+
+        monkeypatch.setattr(httpx, "AsyncClient", _Client)
+        assert asyncio.run(_fetch_profile("u1")) is None
+
+    def test_timeout_is_bounded(self, monkeypatch):
+        """The request must carry an explicit timeout — never unbounded.
+
+        A hung profile-service must not hang every endpoint that reads the
+        notification preference.
+        """
+        import asyncio
+
+        import httpx
+
+        from src.learning_path.router import _fetch_profile
+
+        seen: dict = {}
+
+        class _Resp:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"profile": {}}
+
+        class _Client:
+            def __init__(self, timeout=None):
+                seen["timeout"] = timeout
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url):
+                return _Resp()
+
+        monkeypatch.setattr(httpx, "AsyncClient", _Client)
+        asyncio.run(_fetch_profile("u1"))
+        assert seen["timeout"] == 5.0
+
+    def test_timeout_exception_degrades_to_none(self, monkeypatch):
+        """An actual timeout surfaces as None, not a raised TimeoutException."""
+        import asyncio
+
+        import httpx
+
+        from src.learning_path.router import _fetch_profile
+
+        class _TimeoutClient:
+            def __init__(self, timeout=None):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url):
+                raise httpx.TimeoutException("timed out")
+
+        monkeypatch.setattr(httpx, "AsyncClient", _TimeoutClient)
+        assert asyncio.run(_fetch_profile("u1")) is None

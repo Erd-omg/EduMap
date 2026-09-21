@@ -55,15 +55,47 @@ def mock_rag_service():
 def _make_memory_ops_mock():
     """Create a mock MemoryOperations that simulates realistic behavior.
 
-    - short_term.get_session() returns None by default (no existing session)
-    - Other methods return empty AsyncMock results
+    ``short_term`` keeps a real in-memory store so ``create_session`` followed
+    by ``get_session`` round-trips, mirroring production.  A stub returning
+    ``None`` for every ``get_session`` made any endpoint that reads back a
+    session (``GET /orchestrator/status``, ``POST /cancel``) untestable over
+    HTTP — every lookup 404'd regardless of whether the endpoint worked.
+    Tests that specifically need "no such session" override it explicitly.
     """
+    from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
+    sessions: dict = {}
+
     short_term = AsyncMock()
-    short_term.get_session = AsyncMock(return_value=None)
-    short_term.create_session = AsyncMock()
-    short_term.update_metadata = AsyncMock()
+
+    async def _create_session(session_id, user_id=None, metadata=None, **_kw):
+        sessions[session_id] = SimpleNamespace(
+            session_id=session_id,
+            user_id=user_id,
+            metadata=dict(metadata or {}),
+        )
+
+    async def _get_session(session_id):
+        sess = sessions.get(session_id)
+        if sess is None:
+            return None
+        # Shallow copy of metadata, like the real ShortTermMemory read path, so
+        # callers mutating the returned dict do not corrupt the store.
+        return SimpleNamespace(
+            session_id=sess.session_id,
+            user_id=sess.user_id,
+            metadata=dict(sess.metadata),
+        )
+
+    async def _update_metadata(session_id, metadata):
+        sess = sessions.get(session_id)
+        if sess is not None:
+            sess.metadata.update(metadata)
+
+    short_term.create_session = AsyncMock(side_effect=_create_session)
+    short_term.get_session = AsyncMock(side_effect=_get_session)
+    short_term.update_metadata = AsyncMock(side_effect=_update_metadata)
 
     memory_ops = AsyncMock()
     memory_ops.short_term = short_term
