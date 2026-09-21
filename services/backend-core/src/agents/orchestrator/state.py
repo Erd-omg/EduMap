@@ -118,6 +118,43 @@ class EduMapState(TypedDict, total=False):
     errors: List[Dict[str, str]]
 
 
+def _build_reducer_map() -> dict:
+    """Extract ``{field: reducer}`` from ``EduMapState``'s annotations.
+
+    Any code that merges node updates by hand (see ``router.py``'s live-progress
+    loop) must apply the same reducer LangGraph applies, or its snapshot
+    silently diverges from the graph's real state.  Deriving the map from the
+    annotations — rather than restating it — means a new reducer is picked up
+    automatically and cannot be forgotten at a call site.
+
+    Reads ``__annotations__`` raw because the module uses
+    ``from __future__ import annotations``, so entries arrive as ``ForwardRef``
+    (or plain ``str``) and must be evaluated against the module globals.
+    ``get_type_hints`` would strip the ``Annotated`` metadata we are after.
+    """
+    import sys
+
+    module_globals = sys.modules[__name__].__dict__
+    reducers: dict = {}
+    for field, annotation in EduMapState.__annotations__.items():
+        text = getattr(annotation, "__forward_arg__", annotation)
+        if isinstance(text, str):
+            try:
+                annotation = eval(text, module_globals)  # noqa: S307
+            except Exception:  # pragma: no cover - defensive
+                continue
+        metadata = getattr(annotation, "__metadata__", ())
+        if metadata:
+            reducers[field] = metadata[0]
+    return reducers
+
+
+#: Fields whose concurrent/accumulated writes need merging.  Single source of
+#: truth shared by LangGraph (via the Annotated declarations above) and by
+#: router.py's manual progress merge.
+_STATE_REDUCERS: dict = _build_reducer_map()
+
+
 def create_initial_state(
     task_input: str,
     user_id: str,

@@ -378,3 +378,91 @@ class TestSSEStream:
         # heartbeats after the queue is gone).
         assert popped
         assert any("heartbeat" in f for f in frames)
+
+
+# ── _run_generation: parallel-branch progress merge ────────────────────
+
+
+class ParallelBranchGraph:
+    """astream yields the two concurrent generation branches, then assessment.
+
+    Annotated branches: each returns ONLY its own delta, exactly as designer_node
+    and coder_node do now that ``generated_resources`` carries a reducer.  Under
+    a hand-rolled last-write-wins merge, whichever branch streamed last would
+    win and the other branch's resources would be dropped.
+    """
+
+    def __init__(self):
+        self.state: dict = {}
+
+    async def astream(self, state, stream_mode="updates"):
+        self.state = state
+        # Both branches emit in the same superstep, as LangGraph batches them.
+        yield {
+            "designer": {
+                "current_phase": "GENERATE",
+                "generated_resources": [{"type": "explanation", "title": "E"}],
+                "agent_results": {"designer": {"resources_count": 1}},
+            },
+            "coder": {
+                "current_phase": "GENERATE",
+                "generated_resources": [{"type": "code", "title": "C"}],
+                "agent_results": {"coder": {"count": 1}},
+            },
+        }
+        yield {
+            "assessment": {
+                "current_phase": "ASSESS",
+                "overall_status": "completed",
+                "assessment_result": {"confidence": 0.8},
+                "agent_results": {"assessment": {"confidence": 0.8}},
+            }
+        }
+
+    async def ainvoke(self, state):
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_parallel_branch_resources_both_survive_progress_merge(
+    monkeypatch,
+):
+    """The live-progress merge must apply the declared reducers.
+
+    Regression guard: router.py used to hand-roll last-write-wins for
+    ``generated_resources``.  That was harmless only while the branches ran
+    sequentially and each node echoed the whole accumulated list; once they run
+    in parallel and return deltas, it silently dropped one branch's resources
+    before they reached the resource store.
+    """
+    initial = create_initial_state(
+        task_input="gen", user_id="u1", session_id="s1", knowledge_point_id="kp-1",
+    )
+    monkeypatch.setattr(router, "_get_graph", lambda: ParallelBranchGraph())
+    st = FakeShortTerm(initial)
+    monkeypatch.setattr(router, "_get_short_term", lambda request: st)
+    synced: list[dict] = []
+
+    async def fake_sync(state):
+        synced.append(state)
+
+    monkeypatch.setattr(router, "_sync_generated_resources", fake_sync)
+
+    q = asyncio.Queue()
+    router._sse_queues["s1"] = q
+    await router._run_generation("s1", object())
+
+    # Both branches' resources must be present — not just the last writer's.
+    assert len(synced) == 1
+    types = sorted(r["type"] for r in synced[0]["generated_resources"])
+    assert types == ["code", "explanation"], types
+
+    # Both branches' agent_results must be present too.
+    assert "designer" in synced[0]["agent_results"]
+    assert "coder" in synced[0]["agent_results"]
+
+    # And the persisted snapshot agrees.
+    written = st.metadata["orchestrator_state"]
+    assert sorted(r["type"] for r in written["generated_resources"]) == [
+        "code", "explanation",
+    ]

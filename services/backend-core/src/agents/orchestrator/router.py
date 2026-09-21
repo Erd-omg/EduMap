@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from src.agents.orchestrator.state import create_initial_state
+from src.agents.orchestrator.state import _STATE_REDUCERS, create_initial_state
 from src.memory.short_term import ShortTermMemory
 
 logger = logging.getLogger(__name__)
@@ -413,18 +413,25 @@ async def _run_generation(session_id: str, request: Request) -> None:
                 # Write every step's update back to the session state so
                 # the GET /status endpoint returns live agent progress
                 # instead of always showing the initial "running" state.
-                # agent_results is deep-merged (each node returns only its own
-                # slice) so previously-completed agents are not lost.
+                #
+                # This must apply the SAME reducers the graph uses, or the
+                # live snapshot diverges from the graph's real state.  A
+                # hand-rolled last-write-wins merge was correct only while the
+                # generation branches were sequential: designer_node used to
+                # return the whole accumulated list, so whichever branch wrote
+                # last carried both.  Once the branches run in parallel and
+                # each returns only its own delta, last-write-wins silently
+                # dropped one branch's resources.  Consult the declared
+                # reducers (state.py) instead of duplicating their logic.
                 for node_name, update in step.items():
                     if not isinstance(update, dict):
                         continue
                     for key, value in update.items():
-                        if key == "agent_results" and isinstance(value, dict):
-                            merged = dict(state.get("agent_results") or {})
-                            merged.update(value)
-                            state["agent_results"] = merged
-                        else:
+                        reducer = _STATE_REDUCERS.get(key)
+                        if reducer is None:
                             state[key] = value
+                        else:
+                            state[key] = reducer(state.get(key), value)
                 for node_name in step:
                     if node_name in phase_labels:
                         # Carry the node's ``_report`` (duration, retries, tool
