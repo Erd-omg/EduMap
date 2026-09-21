@@ -242,7 +242,12 @@ _QUESTIONS: dict[str, list[dict]] = {
             "id": "q-cplx-2",
             "type": "choice",
             "content": "以下复杂度从低到高排列正确的是？",
-            "options": ["O(1) < O(log n) < O(n) < O(n log n) < O(n²)", "O(1) < O(n) < O(log n) < O(n²) < O(n log n)", "O(n) < O(1) < O(log n) < O(n log n) < O(n²)", "O(log n) < O(1) < O(n) < O(n²) < O(n log n)"],
+            "options": [
+                "O(1) < O(log n) < O(n) < O(n log n) < O(n²)",
+                "O(1) < O(n) < O(log n) < O(n²) < O(n log n)",
+                "O(n) < O(1) < O(log n) < O(n log n) < O(n²)",
+                "O(log n) < O(1) < O(n) < O(n²) < O(n log n)",
+            ],
             "correct_answer": "O(1) < O(log n) < O(n) < O(n log n) < O(n²)",
         },
     ],
@@ -256,7 +261,11 @@ def get_questions(kp_id: str) -> list[QuizQuestion]:
     for q_data in raw_list:
         # Ensure correct_answer is in options
         if q_data["correct_answer"] not in q_data.get("options", []):
-            q_data["options"] = [q_data["correct_answer"]] + [o for o in q_data.get("options", []) if o != q_data["correct_answer"]]
+            others = [
+                o for o in q_data.get("options", [])
+                if o != q_data["correct_answer"]
+            ]
+            q_data["options"] = [q_data["correct_answer"]] + others
 
         questions.append(QuizQuestion(
             id=q_data["id"],

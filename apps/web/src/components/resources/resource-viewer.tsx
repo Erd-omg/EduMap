@@ -154,7 +154,7 @@ export function ResourceViewer({
         </p>
       ) : (
         <p className="text-xs text-text-light text-center py-4">
-          该知识点暂无生成资源，请使用"生成资源"功能创建
+          该知识点暂无生成资源，请使用&ldquo;生成资源&rdquo;功能创建
         </p>
       )}
     </div>

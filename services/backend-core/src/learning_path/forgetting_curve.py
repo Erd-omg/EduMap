@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -373,19 +373,16 @@ class ForgettingCurveService:
         for key in to_delete:
             del self._states[key]
 
-        # Remove from database
-        db_count = 0
+        # Remove from database.  The returned row count is not used — the
+        # reported ``total`` is the in-memory count — so the DELETE is issued
+        # for its effect only.
         if self._db_pool:
             try:
                 async with self._db_pool.acquire() as conn:
-                    result = await conn.execute(
+                    await conn.execute(
                         "DELETE FROM forgetting_curve_state WHERE user_id = $1",
                         user_id,
                     )
-                    try:
-                        db_count = int(result.split()[-1])
-                    except (ValueError, IndexError):
-                        db_count = 0
             except Exception as exc:
                 logger.warning("Failed to delete forgetting curves from DB: %s", exc)
 

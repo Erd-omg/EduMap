@@ -7,15 +7,13 @@ hand-curated query datasets for more realistic evaluation.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from src.rag.evaluation.datasets import load_sample_queries
-from src.rag.evaluation.evaluator import EvalResult, RAGEvaluator
+from src.rag.evaluation.evaluator import RAGEvaluator
 from src.rag.evaluation.metrics import hit_rate_at_k
-from src.rag.models import RAGResult
 
 if TYPE_CHECKING:
     from src.kg.repositories.knowledge_point_repo import KnowledgePointRepository

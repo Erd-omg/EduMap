@@ -8,7 +8,6 @@ recursively splits sub-chunks using the next separator in the hierarchy.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +137,12 @@ class RecursiveChunker:
                 overlapped.append(chunk)
             else:
                 # Take last N characters of previous chunk as overlap prefix
-                prev_end = chunks[i - 1][-self._chunk_overlap:] if len(chunks[i - 1]) > self._chunk_overlap else chunks[i - 1]
+                prev = chunks[i - 1]
+                prev_end = (
+                    prev[-self._chunk_overlap:]
+                    if len(prev) > self._chunk_overlap
+                    else prev
+                )
                 overlapped.append(prev_end + chunk)
 
         return overlapped

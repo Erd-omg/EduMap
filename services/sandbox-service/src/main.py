@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import time
 import logging
-import os
 import uuid
 
 import docker
@@ -16,7 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.auth import verify_api_key
-from src.config import settings, _IP_REQUEST_COUNTS, _CONCURRENT_SEMAPHORE
+# ``_CONCURRENT_SEMAPHORE`` looks unused to linters but is referenced by the
+# ``global`` statement in ``_get_semaphore()`` below — do not remove.
+from src.config import settings, _IP_REQUEST_COUNTS, _CONCURRENT_SEMAPHORE  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,13 @@ async def _check_rate_limit(request: Request) -> None:
     _IP_REQUEST_COUNTS[client_ip] = (count + 1, window_start)
     if count >= settings.rate_limit_per_minute:
         logger.warning("Rate limit exceeded for IP %s (%d/min)", client_ip, count + 1)
-        raise HTTPException(status_code=429, detail=f"Rate limit exceeded: max {settings.rate_limit_per_minute} requests/min per IP")
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit exceeded: max "
+                f"{settings.rate_limit_per_minute} requests/min per IP"
+            ),
+        )
 
 
 # ── Concurrency semaphore ──────────────────────────────────────────────

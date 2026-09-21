@@ -45,9 +45,11 @@ jobs:
       - run: pip install flake8 bandit
       - name: Lint Python services
         run: |
+          # Settings (max-line-length, ignores, excludes) come from .flake8 at
+          # the repo root so CI and local runs cannot drift.
           for service in services/backend-core services/profile-service services/sandbox-service; do
             echo "Linting $service..."
-            flake8 "$service/src" --max-line-length=100 --extend-ignore=E203,W503
+            flake8 "$service/src"
           done
       - name: SAST with bandit
         run: |

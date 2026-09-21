@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, Depends, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
-from src.rag.models import MentorSource, EvalReport, RerankPreviewRequest, RerankPreviewResponse
+from src.rag.models import EvalReport, RerankPreviewRequest, RerankPreviewResponse
 from src.rag.rag_service import RAGRetrievalService
 
 logger = logging.getLogger(__name__)

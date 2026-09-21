@@ -7,7 +7,6 @@ executes in the sandbox service, and iteratively fixes on failure.
 from __future__ import annotations
 
 import ast
-import json
 import logging
 import re
 from typing import TYPE_CHECKING, Any

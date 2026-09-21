@@ -18,8 +18,7 @@ from src.memory.models import (
 from src.memory.short_term import ShortTermMemory
 
 if TYPE_CHECKING:
-    from src.memory.db import MemoryDBPool
-    from redis.asyncio import Redis
+    pass
 
 logger = logging.getLogger(__name__)
 

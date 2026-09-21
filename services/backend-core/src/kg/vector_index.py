@@ -1,6 +1,5 @@
 """Vector index with ChromaDB support and in-memory fallback."""
 
-import json
 import logging
 from typing import Any
 

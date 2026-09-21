@@ -164,7 +164,9 @@ class ContentAuditorAgent(BaseAgent):
                 content_type=resource.type,
                 content=resource.content[:2000],
             )
-            response = await self._llm.generate(prompt)  # type: ignore[union-attr]
+            # The call itself is the point (it records token usage and may
+            # raise); the returned text is unused here.
+            await self._llm.generate(prompt)  # type: ignore[union-attr]
             return True, None
         except Exception:
             return True, None  # Graceful degradation — skip LLM check

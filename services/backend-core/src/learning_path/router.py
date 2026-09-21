@@ -15,17 +15,12 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from src.kg.repositories.edge_repo import EdgeRepository
-from src.kg.repositories.knowledge_point_repo import KnowledgePointRepository
 from src.learning_path.forgetting_curve import (
     ALERT_RECALL_THRESHOLD,
     URGENT_RECALL_THRESHOLD,
     ForgettingCurveService,
 )
 from src.learning_path.models import (
-    ContentTypeSuggestion,
-    PathNode,
-    PathRecommendation,
     PersonalizedPath,
 )
 from src.learning_path.path_service import PathService
@@ -313,7 +308,6 @@ async def get_dashboard(
     Returns forgetting curve alerts, mastery distribution, and activity data.
     """
     fc: ForgettingCurveService = getattr(request.app.state, "forgetting_service", None)
-    path_svc: PathService = getattr(request.app.state, "path_service", None)
 
     if not fc:
         raise HTTPException(status_code=503, detail="Forgetting service not available")

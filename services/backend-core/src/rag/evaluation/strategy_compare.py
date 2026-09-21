@@ -22,8 +22,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import BaseModel
-
 from src.rag.evaluation.metrics import (
     hit_rate_at_k,
     mean_reciprocal_rank,
@@ -42,8 +40,6 @@ logger = logging.getLogger(__name__)
 # ``QueryRewriter`` / ``RewrittenQuery`` / the rewrite prompt now live in
 # src/rag/query_rewrite.py (production code) and are imported above; this
 # module only drives them for measurement.
-
-
 
 
 @dataclass
@@ -298,7 +294,6 @@ class StrategyComparator:
         print(sep)
 
         strategies = result["strategies"]
-        ks = [str(k) for k in result["k_values"]]
 
         print(f"\n  {'策略':<10} ", end="")
         for metric in ("R@5", "P@5", "MRR", "NDCG@5", "HR@5", "延迟ms"):
@@ -329,12 +324,12 @@ class StrategyComparator:
 
         summary = result.get("summary", {})
         if summary.get("best_per_metric"):
-            print(f"\n  🏆 各指标最优策略:")
+            print("\n  🏆 各指标最优策略:")
             for metric, strategy in summary["best_per_metric"].items():
                 print(f"     {metric:<16} → {strategy}")
 
         if summary.get("improvement_vs_direct"):
-            print(f"\n  📈 相对 direct 基线的提升:")
+            print("\n  📈 相对 direct 基线的提升:")
             for name, delta in summary["improvement_vs_direct"].items():
                 print(
                     f"     {name:<10} Recall@5 {delta['recall@5_delta']:+.4f}  "

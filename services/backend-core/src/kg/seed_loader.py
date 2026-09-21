@@ -24,18 +24,24 @@ class SeedLoader:
         self.conn = conn
 
     def _seed_path(self) -> Path:
-        """Resolve the seed Cypher file path from the project root.
+        """Resolve the seed Cypher file path.
 
-        Works in both development (project root) and Docker (/app).
-        Seed file lives at ``scripts/db/seed/neo4j-seed.cypher``.
+        The file lives at ``<repo-root>/scripts/db/seed/neo4j-seed.cypher``.
+        Rather than hardcoding a parent depth (which silently broke when the
+        repo moved to a ``services/backend-core`` monorepo layout), walk up
+        from this file until the seed file is found.
         """
-        # __file__ = /app/src/kg/seed_loader.py → 3 × parent = /app
+        here = Path(__file__).resolve()
+        for parent in here.parents:
+            candidate = (
+                parent / "scripts" / "db" / "seed" / "neo4j-seed.cypher"
+            )
+            if candidate.exists():
+                return candidate
+        # Nothing found — return the repo-root-relative guess so the caller's
+        # FileNotFoundError names a sensible location.
         return (
-            Path(__file__).resolve().parent.parent.parent
-            / "scripts"
-            / "db"
-            / "seed"
-            / "neo4j-seed.cypher"
+            here.parents[4] / "scripts" / "db" / "seed" / "neo4j-seed.cypher"
         )
 
     async def load_seed_data(self) -> SeedLoadResponse:
@@ -73,7 +79,7 @@ class SeedLoader:
                 continue
 
             try:
-                result = await self.conn.execute_write(cleaned)
+                await self.conn.execute_write(cleaned)
                 # Rough counting: MERGE/CREATE statements with SET usually create 1 node
                 if any(kw in cleaned.upper() for kw in ("MERGE (", "CREATE (")):
                     if "HAS_TOPIC" in cleaned or "PREREQUISITE_OF" in cleaned or "RELATED_TO" in cleaned:

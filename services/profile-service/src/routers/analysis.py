@@ -60,11 +60,11 @@ async def stream_analysis(
                         "event": "error",
                         "data": json.dumps({"content": event["content"]}),
                     }
-        except Exception as exc:
+        except Exception:
             logger.exception("SSE event_generator failed")
             yield {
                 "event": "error",
-                "data": json.dumps({"content": f"分析服务出错，请重试"}),  # don't leak internal error details
+                "data": json.dumps({"content": "分析服务出错，请重试"}),  # don't leak internal error details
             }
 
     return EventSourceResponse(event_generator())

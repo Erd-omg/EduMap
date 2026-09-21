@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
-from src.rag.models import RAGContext, RAGResult, SourceType
+from src.rag.models import RAGContext, RAGResult
 from src.utils.ttl_cache import TTLLRUCache
 
 if TYPE_CHECKING:

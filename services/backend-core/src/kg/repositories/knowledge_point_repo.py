@@ -10,7 +10,6 @@ from src.kg.models import (
     KnowledgeGraphResponse,
     KnowledgePoint,
     KnowledgePointCreate,
-    KnowledgePointBase,
 )
 
 logger = logging.getLogger(__name__)

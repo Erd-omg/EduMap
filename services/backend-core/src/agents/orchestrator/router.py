@@ -17,16 +17,14 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any
 
 import httpx
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from src.agents.orchestrator.graph import create_graph
-from src.agents.orchestrator.state import EduMapState, create_initial_state
+from src.agents.orchestrator.state import create_initial_state
 from src.memory.short_term import ShortTermMemory
 
 logger = logging.getLogger(__name__)
@@ -257,13 +255,17 @@ async def _sse_event_generator(session_id: str, queue: asyncio.Queue):
             if event.get("type") == "workflow_error":
                 yield f"event: workflow_error\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
                 break
-            yield f"event: {event.get('type', 'message')}\ndata: {json.dumps(event.get('data', event), ensure_ascii=False)}\n\n"
+            payload = json.dumps(event.get('data', event), ensure_ascii=False)
+            yield f"event: {event.get('type', 'message')}\ndata: {payload}\n\n"
         except asyncio.TimeoutError:
             # No event for _SSE_TIMEOUTs — emit a heartbeat and KEEP
             # looping.  Real generations (5+ min) exceed this gap.  The
             # loop only ends on a terminal event, client disconnect, or
             # the pop-guard above.
-            yield f"event: heartbeat\ndata: {json.dumps({'type': 'heartbeat', 'reason': 'timeout', 'timestamp': time.time()})}\n\n"
+            hb = json.dumps({
+                'type': 'heartbeat', 'reason': 'timeout', 'timestamp': time.time(),
+            })
+            yield f"event: heartbeat\ndata: {hb}\n\n"
             continue
 
 
@@ -335,7 +337,7 @@ async def _sync_generated_resources(state: dict) -> None:
                 for i, r in enumerate(generated)
             ]
             await client.post(
-                f"http://localhost:8000/api/v1/resources/sync-generated",
+                "http://localhost:8000/api/v1/resources/sync-generated",
                 json=sync_payload,
             )
             logger.info("Synced %d generated resources to resource store", len(generated))

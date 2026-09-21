@@ -7,7 +7,6 @@ accurate faithfulness and relevancy scores for Chinese text.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 

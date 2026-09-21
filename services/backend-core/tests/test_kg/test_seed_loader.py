@@ -96,39 +96,28 @@ class TestSeedPath:
         assert path.parent.name == "seed"
         assert path.parent.parent.name == "db"
 
-    def test_seed_path_traversal_depth(self, loader: SeedLoader) -> None:
-        """_seed_path goes up 3 parent dirs from the module file (src/kg/seed_loader.py).
+    def test_seed_path_actually_exists(self, loader: SeedLoader) -> None:
+        """The resolved path must point at a real file.
 
-        The logic:
-            Path(__file__).resolve().parent.parent.parent / "scripts" / "db" / "seed" / "neo4j-seed.cypher"
-
-        So given __file__ = /app/src/kg/seed_loader.py:
-            parent (1) = /app/src/kg
-            parent (2) = /app/src
-            parent (3) = /app
-            + scripts/db/seed/neo4j-seed.cypher = /app/scripts/db/seed/neo4j-seed.cypher
+        Regression guard: the previous implementation hardcoded
+        ``Path(__file__).parent.parent.parent`` — correct for a Docker layout
+        (``/app/src/kg/...``) but wrong for this monorepo, where it resolved to
+        ``services/backend-core/scripts/...`` (nonexistent).  CI's Neo4j
+        seeding step therefore failed on every run.  Earlier tests only checked
+        path *components*, never existence, so the bug went unnoticed.
         """
         path = loader._seed_path()
-        parts = path.parts
-        # Expect .../<something>/scripts/db/seed/neo4j-seed.cypher
-        assert "scripts" in parts
-        assert "db" in parts
-        assert "seed" in parts
-        assert path.name == "neo4j-seed.cypher"
+        assert path.exists(), f"seed file not found at {path}"
+        assert path.is_file()
 
-    def test_seed_path_resolves_from_module_location(self, loader: SeedLoader) -> None:
-        """Verify the path structure matches the expected layout.
-
-        The production code assumes Docker layout (``/app/scripts/...``).
-        In development the file lives at the repo root; the assertion here
-        only checks component names, not that the file exists on disk.
-        """
+    def test_seed_path_walks_up_to_repo_root(self, loader: SeedLoader) -> None:
+        """Resolution must be layout-independent (monorepo and Docker)."""
         path = loader._seed_path()
-        # Expect:  …/scripts/db/seed/neo4j-seed.cypher
-        assert path.name == "neo4j-seed.cypher"
-        assert path.parent.name == "seed"
-        assert path.parent.parent.name == "db"
-        assert "scripts" in path.parts
+        # The seed file lives under some ``<root>/scripts/db/seed/``.
+        assert path.parts[-4:-1] == ("scripts", "db", "seed")
+        # And that root must contain the rest of the expected scaffolding.
+        root = path.parents[3]
+        assert (root / "services" / "backend-core").exists()
 
 
 # ---------------------------------------------------------------------------

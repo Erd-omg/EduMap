@@ -14,7 +14,6 @@ The chunking strategy is configurable via ``chunking_strategy``:
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any

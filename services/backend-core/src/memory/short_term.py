@@ -180,18 +180,14 @@ class ShortTermMemory:
             if cursor == 0:
                 break
 
-
     @classmethod
     def _in_memory_fallback(cls) -> ShortTermMemory:
         """Create a fallback ShortTermMemory with no Redis backend.
 
         Uses a plain dict. Not persistent across restarts — for development only.
         """
-        import uuid
         _fallback_store: dict[str, str] = {}
         _fallback_ttl: dict[str, datetime] = {}
-
-        _fake_redis_type = type('_FakeRedis', (), {})
 
         class _FakeRedis:
             async def get(self, key):

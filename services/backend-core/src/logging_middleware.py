@@ -12,10 +12,7 @@ Usage in main.py::
 from __future__ import annotations
 
 import logging
-import re
 
-from starlette.datastructures import URL
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 # Query parameters whose values should be redacted in access logs
 _REDACTED_PARAMS = frozenset({"query", "message", "q", "token", "key", "password", "api_key"})

@@ -21,6 +21,8 @@ interface ProfileState {
   updateConfidence: (scores: Record<string, number>) => void;
   addMessage: (role: 'user' | 'assistant', content: string) => void;
   setAnalyzing: (v: boolean) => void;
+  /** Push the current profile + settings to profile-service (best-effort). */
+  syncToBackend: () => Promise<void>;
   reset: () => void;
 }
 

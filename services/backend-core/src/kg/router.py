@@ -122,7 +122,10 @@ async def list_courses(
 ):
     """List all courses from Neo4j."""
     pool: Neo4jPool = request.app.state.neo4j_pool
-    query = "MATCH (c:Course) RETURN c.id AS id, c.name AS name, c.description AS description, c.difficulty AS difficulty ORDER BY c.id"
+    query = (
+        "MATCH (c:Course) RETURN c.id AS id, c.name AS name, "
+        "c.description AS description, c.difficulty AS difficulty ORDER BY c.id"
+    )
     result = await pool.execute_read(query)
     courses = []
     for row in result:

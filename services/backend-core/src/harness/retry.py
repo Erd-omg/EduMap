@@ -91,7 +91,7 @@ class RetryHandler:
                 on_retry=on_retry,
                 **kwargs,
             )
-        except Exception as exc:
+        except Exception:
             if circuit_record_failure:
                 circuit_record_failure()
             raise

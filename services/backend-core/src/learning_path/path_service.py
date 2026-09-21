@@ -239,7 +239,7 @@ class PathService:
         progress_map = {r.kp_id: r for r in user_progress if r.course_id == course_id}
 
         # 4. Determine ability level
-        ability = self._estimate_ability(profile)
+        self._estimate_ability(profile)
 
         # 5. Build path nodes
         nodes: list[PathNode] = []

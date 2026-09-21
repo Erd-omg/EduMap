@@ -7,7 +7,7 @@ Purely deterministic — no LLM dependency.  Validates a proposed set of
 from __future__ import annotations
 
 import logging
-from collections import defaultdict, deque
+from collections import defaultdict
 
 from src.agents.models import GuardianOutput, KnowledgeUnit
 

@@ -132,12 +132,21 @@ class BaseAgent(ToolInjectionMixin, MemoryAwareMixin, ABC):
             # Step 2: run (core logic) with circuit breaker awareness
             retry_count = [0]
 
-            # If the LLM adapter has a circuit breaker, bridge it into retry
-            cb_check = None
-            cb_record = None
-            if hasattr(self._llm, '_is_circuit_open') and hasattr(self._llm, '_record_failure'):
-                cb_check = lambda: self._llm._is_circuit_open()  # type: ignore[union-attr]
-                cb_record = lambda: self._llm._record_failure()   # type: ignore[union-attr]
+            # If the LLM adapter has a circuit breaker, bridge it into retry.
+            # Defined as closures (not lambdas) so the adapter reference is
+            # resolved at call time, and to satisfy E731.
+            has_circuit_breaker = hasattr(self._llm, '_is_circuit_open') and hasattr(
+                self._llm, '_record_failure'
+            )
+
+            def _cb_check() -> bool:
+                return self._llm._is_circuit_open()  # type: ignore[union-attr]
+
+            def _cb_record() -> None:
+                self._llm._record_failure()  # type: ignore[union-attr]
+
+            cb_check = _cb_check if has_circuit_breaker else None
+            cb_record = _cb_record if has_circuit_breaker else None
 
             output = await RetryHandler.with_circuit_breaker(
                 self.run,

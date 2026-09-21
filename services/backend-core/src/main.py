@@ -55,7 +55,11 @@ async def lifespan(app: FastAPI):
 
     # ── Extract DB pool from memory system (used by multiple services) ────
     memory_db_pool_inner = getattr(memory_ops.long_term, '_db', None)
-    forgetting_db_pool = memory_db_pool_inner.pool if memory_db_pool_inner and hasattr(memory_db_pool_inner, 'pool') else None
+    forgetting_db_pool = (
+        memory_db_pool_inner.pool
+        if memory_db_pool_inner and hasattr(memory_db_pool_inner, "pool")
+        else None
+    )
 
     # ── Learning Path service ───────────────────────────────────────────
     from src.kg.repositories.knowledge_point_repo import KnowledgePointRepository
@@ -175,7 +179,6 @@ async def lifespan(app: FastAPI):
 def _configure_agents(app: FastAPI, pool: Neo4jPool, llm) -> None:
     """Wire agent dependencies and configure the LangGraph."""
     from src.kg.repositories.knowledge_point_repo import KnowledgePointRepository
-    from src.kg.repositories.edge_repo import EdgeRepository
     from src.kg.vector_index import VectorIndex
     from src.agents.orchestrator.graph import configure_graph
     from src.agents.planner.agent import PlannerAgent
@@ -184,10 +187,8 @@ def _configure_agents(app: FastAPI, pool: Neo4jPool, llm) -> None:
     from src.agents.coder.agent import CoderAgent
     from src.agents.content_auditor.agent import ContentAuditorAgent
     from src.agents.assessment.agent import AssessmentAgent
-    from src.agents.mentor.agent import MentorAgent
 
     kp_repo = KnowledgePointRepository(pool)
-    edge_repo = EdgeRepository(pool)
 
     # Inject harness services (tool_registry + memory_ops) into agents
     tool_registry = getattr(app.state, "tool_registry", None)
@@ -387,27 +388,29 @@ app.add_middleware(
 app.include_router(kg_router)
 
 # Register the orchestrator router (lazy-import to avoid circular deps)
-from src.agents.orchestrator.router import router as orchestrator_router
+from src.agents.orchestrator.router import (  # noqa: E402
+    router as orchestrator_router,
+)
 app.include_router(orchestrator_router)
 
 # Register the learning path router
-from src.learning_path.router import router as learning_path_router
+from src.learning_path.router import router as learning_path_router  # noqa: E402  (deferred: avoids circular imports)
 app.include_router(learning_path_router)
 
 # Register the mentor / RAG router
-from src.rag.router import router as mentor_router
+from src.rag.router import router as mentor_router  # noqa: E402  (deferred: avoids circular imports)
 app.include_router(mentor_router)
 
 # Register the resource management router
-from src.resources.router import router as resource_router
+from src.resources.router import router as resource_router  # noqa: E402  (deferred: avoids circular imports)
 app.include_router(resource_router)
 
 # Register the unified analysis / profile SSE router
-from src.analysis.router import router as analysis_router
+from src.analysis.router import router as analysis_router  # noqa: E402  (deferred: avoids circular imports)
 app.include_router(analysis_router)
 
 # Register the debug / simulation router (non-production only)
-from src.debug.simulate_growth import router as debug_router
+from src.debug.simulate_growth import router as debug_router  # noqa: E402  (deferred: avoids circular imports)
 app.include_router(debug_router)
 
 # Register the privacy (PIPL compliance) router

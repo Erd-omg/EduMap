@@ -15,12 +15,10 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
 if TYPE_CHECKING:
     from src.learning_path.forgetting_curve import ForgettingCurveService
-    from src.memory.long_term import LongTermMemory
-    from src.memory.short_term import ShortTermMemory
     from src.resources.repository import ResourceRepository
 
 logger = logging.getLogger(__name__)
@@ -147,7 +145,6 @@ async def export_user_data(user_id: str, request: Request):
     memory_ops = _get_memory_ops(request)
     if memory_ops and memory_ops.long_term:
         try:
-            from src.memory.models import EventType
             episodic = await memory_ops.long_term.recall_episodic(
                 user_id=user_id,
                 event_types=None,
@@ -227,11 +224,13 @@ async def anonymize_user_data(user_id: str, request: Request):
         f"{user_id}:{_ANONYMIZATION_SALT}".encode()
     ).hexdigest()[:32]
 
-    memory_ops = _get_memory_ops(request)
     anonymized_count = 0
 
-    # Export current data first (for audit log)
-    export_data = await export_user_data(user_id, request)
+    # NOTE: the previous code called ``export_user_data(user_id, request)``
+    # here with the comment "for audit log", but the result was never stored or
+    # written anywhere — so it was dead work.  The export endpoint
+    # (``GET /privacy/export``) remains the supported way to obtain user data.
+    # The call is not reinstated until there is an actual audit sink for it.
 
     # Delete original data (same cascade as delete endpoint)
     await delete_user_data(user_id, request)
