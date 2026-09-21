@@ -133,6 +133,27 @@ python3 scripts/run_strategy_comparison.py --dataset sample \
 - 因此**改写代码保留但默认关闭**（`rag_rewrite_enabled: bool = False`）。这是一个**诚实的负结果**，比编一个提升百分比可信得多——而且它恰好印证了 §5 的判断：优化要拿数据说话，拍脑袋加 LLM 环节大概率是负收益。
 - **唯一真正需要改写的场景是多轮指代**（"它和上一个有什么区别？"）——实测 LLM 在没有对话上下文时只能产出"二者区别 对比 概念辨析"这种空洞改写，**改写必须结合短期记忆才有意义**，这属于后续演进项。
 
+### 4.3 检索结果缓存收益（实测，`--repeat 2`）
+
+对同一评测集连跑两遍，比较 pass-1 与 pass-2 的延迟：
+
+```bash
+python3 scripts/run_strategy_comparison.py --dataset expanded \
+    --strategies direct,hybrid --repeat 2 --output benchmark_results
+```
+
+`--repeat` 模式下 hybrid 腿允许命中检索结果缓存；`direct` 直调 `_chroma_search` 不经缓存，
+作为**对照组**，用来把"缓存收益"和"进程预热收益"分开——否则第一遍的模型加载/jieba 建词表
+会被误算成缓存功劳。
+
+| 策略 | 第 1 轮 | 第 2 轮 | 倍数 | 归因 |
+|---|---|---|---|---|
+| direct（对照组） | 31.81 ms | 14.46 ms | ×2.20 | 进程预热，**与缓存无关** |
+| hybrid（经缓存） | 16.75 ms | **0.01 ms** | **×1675** | 第 2 轮完全命中缓存，未执行检索 |
+
+**结论**：重复查询的检索延迟由 ~17ms 降到 **~0.01ms**（同进程内），且对照组证明这不是预热假象。
+一致性由 TTL（默认 300s）兜底——知识更新后最多 5 分钟生效。
+
 **同时发现并修复了一个真 bug（值得单独讲）**：三种融合策略的去重 key 原本是 `(source_type, source_id)`，但**同一个知识点会同时被 ChromaDB 和 Neo4j 两路召回**——两路的 `source_id` 相同、`source_type` 不同，于是被当成两篇文档。后果有两个：一是结果列表出现重复项，`recall@k` 算出 **> 1 的非法值**（实测 hybrid R@5 一度是 **1.625**）；二是 RRF 文档里写的"同一文档多源得分累加"**从未真正生效**。修复方式是把去重 key 改为文档身份 `source_id`（`source_type` 降级为溯源标记）。修复后 `recall@k` 回到合法区间（n=200 上 hybrid MRR 0.8569、direct 0.8454），重复项消失，RRF 的多源累加才真正生效。回归测试写在 `tests/test_rag/test_rag_service.py`，其中原有用例 `test_dedup_by_composite_key` 恰恰**把错误行为固化成了断言**，已一并改写。
 
 > **本节修正说明**：早期版本把 n=200 的 `MRR 0.841 / HitRate@3 0.930 / P@1 0.755` 归因于"加上 Cross-Encoder 精排之后的最优配置"，并把同一组数字标注为"20 条标注数据集"——两处均为错误。实测情况是：**所有已记录基准均为重排关闭**，且 n=20 与 n=200 指标并不相同。`Faithfulness 0.620` 也与原始报告（启发式 0.010 / LLM-judge 0.277）不符，已按实测改写。

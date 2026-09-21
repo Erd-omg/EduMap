@@ -177,7 +177,15 @@ async def main() -> int:
         llm = create_llm(settings)
         logger.info("LLM 已启用: 用于 query rewrite (%s)", settings.llm_model)
 
-    comparator = StrategyComparator(rag_service, llm=llm, k_values=k_values)
+    # With --repeat >1 we are measuring the retrieval result cache itself, so
+    # the hybrid leg must be allowed to hit it.  Otherwise the strategies are
+    # compared cache-free, which is what makes the latency column meaningful.
+    measuring_cache = args.repeat > 1
+    if measuring_cache:
+        rag_service.enable_result_cache()
+    comparator = StrategyComparator(
+        rag_service, llm=llm, k_values=k_values, use_cache=measuring_cache
+    )
 
     # Multiple passes: pass N>1 measures the retrieval-result cache.  Each
     # pass gets a fresh StrategyMetrics slot keyed f"{strategy}#pass{n}".

@@ -24,6 +24,28 @@ python3 scripts/run_strategy_comparison.py --dataset expanded \
 # 测检索缓存：加 --repeat 2
 ```
 
+## 检索缓存收益 (`--repeat 2`)
+
+`--repeat 2` 会把同一评测集跑两遍并分别报告延迟。此模式下 hybrid 腿**允许命中检索结果缓存**
+（`use_cache=True`），第二遍即缓存命中率的上界；`direct` 直调 `_chroma_search` 不经缓存，
+因此作为对照组，用来区分"缓存收益"与"进程预热收益"。
+
+```bash
+python3 scripts/run_strategy_comparison.py --dataset expanded \
+    --strategies direct,hybrid --repeat 2 --output benchmark_results
+```
+
+n=200 实测（`strategy_comparison_20260921T090049Z.json`）：
+
+| 策略 | 第 1 轮 | 第 2 轮 | 倍数 | 说明 |
+|---|---|---|---|---|
+| direct（不经缓存，对照组） | 31.81 ms | 14.46 ms | ×2.20 | 纯进程预热（jieba/OS 缓存），与检索缓存无关 |
+| hybrid（经缓存） | 16.75 ms | **0.01 ms** | **×1675** | 第 2 轮完全命中缓存，未执行任何检索 |
+
+**结论**：检索结果缓存在重复查询上把延迟从 ~17ms 降到 ~0.01ms（同进程内），
+即**重复查询不再触发向量检索与图谱查询**。对照组证明该收益不是预热假象。
+缓存 TTL 默认 300s（`rag_cache_ttl_seconds`），一致性由 TTL 兜底。
+
 | 文件 | n | 策略 | 说明 |
 |---|---|---|---|
 | `strategy_comparison_20260920T203628Z.json` | 20 | direct, hybrid | 首次跑通（含去重 bug 修复前的异常 recall） |
@@ -31,6 +53,7 @@ python3 scripts/run_strategy_comparison.py --dataset expanded \
 | `strategy_comparison_20260921T050008Z.json` | 20 | + rewrite | 首次暴露 rewrite 负收益 |
 | `strategy_comparison_20260921T051401Z.json` | 200 | + rewrite | 三策略完整对比（缓存口径不对称，仅留档） |
 | `strategy_comparison_20260921T083648Z.json` | 200 | direct, hybrid | **公平延迟口径（`use_cache=False`）——引用延迟时用这份** |
+| `strategy_comparison_20260921T090049Z.json` | 200 | direct, hybrid | **`--repeat 2` 缓存收益测量（见下节）** |
 
 **n=200 实测结论**（三条策略统一 `use_cache=False`，避免 hybrid 因命中检索缓存而显得更快）：
 

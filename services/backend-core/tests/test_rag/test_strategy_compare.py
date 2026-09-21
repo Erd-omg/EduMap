@@ -32,6 +32,7 @@ class FakeRAGService:
     def __init__(self):
         self.chroma_calls: list[tuple[str, int]] = []
         self.hybrid_calls: list[tuple[str, int]] = []
+        self.cache_flags: list[bool] = []
 
     async def _chroma_search(self, query: str, top_k: int) -> list:
         self.chroma_calls.append((query, top_k))
@@ -43,6 +44,7 @@ class FakeRAGService:
         # Mirrors RAGRetrievalService.search's real signature, including
         # use_cache (the comparator passes False so latency isn't a cache artifact).
         self.hybrid_calls.append((query, top_k))
+        self.cache_flags.append(use_cache)
         # Hybrid finds kp-1 and kp-2 (KG recall), ranked better.
         return [FakeResult("kp-1"), FakeResult("kp-2"), FakeResult("irrelevant-1")]
 
@@ -199,3 +201,32 @@ def test_print_comparison_does_not_crash(capsys):
     assert "检索策略对比评测" in out
     assert "hybrid" in out
     assert "0.74" in out
+
+
+class TestComparatorCacheMode:
+    """StrategyComparator.use_cache controls whether hybrid may hit the cache.
+
+    Regression guard: the strategies must be compared cache-free by default
+    (otherwise hybrid's latency is partly a cache artifact), but the --repeat
+    cache benchmark must be able to opt IN, or it would measure nothing.
+    """
+
+    async def test_default_bypasses_cache(self) -> None:
+        rag = FakeRAGService()
+        comparator = StrategyComparator(rag, llm=None)
+        await comparator._search_hybrid("什么是栈", 5)
+        assert rag.cache_flags[-1] is False, "default must pass use_cache=False"
+
+    async def test_opt_in_uses_cache(self) -> None:
+        rag = FakeRAGService()
+        comparator = StrategyComparator(rag, llm=None, use_cache=True)
+        await comparator._search_hybrid("什么是栈", 5)
+        assert rag.cache_flags[-1] is True, "opt-in must pass use_cache=True"
+
+    async def test_direct_never_uses_search(self) -> None:
+        """direct calls _chroma_search directly — hence the asymmetry."""
+        rag = FakeRAGService()
+        comparator = StrategyComparator(rag, llm=None, use_cache=True)
+        await comparator._search_direct("什么是栈", 5)
+        assert rag.chroma_calls, "direct must go through _chroma_search"
+        assert not rag.cache_flags, "direct must not reach search()"

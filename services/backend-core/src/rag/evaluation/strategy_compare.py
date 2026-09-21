@@ -77,18 +77,32 @@ class StrategyMetrics:
 
 
 class StrategyComparator:
-    """Run direct / hybrid / rewrite retrieval strategies on one dataset."""
+    """Run direct / hybrid / rewrite retrieval strategies on one dataset.
+
+    Args:
+        rag_service: The retrieval service under test.
+        llm: Adapter for the rewrite strategy; ``None`` disables it.
+        k_values: Cut-offs to report.
+        use_cache: Whether the hybrid/rewrite legs may hit the retrieval result
+            cache.  Defaults to False because ``direct`` calls ``_chroma_search``
+            directly and can never use the cache — letting hybrid use it would
+            make hybrid's latency partly a cache artifact.  Set True only when
+            the *cache itself* is what you are measuring (the ``--repeat`` mode),
+            where a pass-1 vs pass-N latency drop is the point.
+    """
 
     def __init__(
         self,
         rag_service: Any,
         llm: Any = None,
         k_values: list[int] | None = None,
+        use_cache: bool = False,
     ) -> None:
         self._rag = rag_service
         self._llm = llm
         self._k_values = k_values or [1, 3, 5, 10]
         self._rewriter = QueryRewriter(llm) if llm is not None else None
+        self._use_cache = use_cache
 
     # ── Strategy implementations ─────────────────────────────────────
 
@@ -97,19 +111,21 @@ class StrategyComparator:
 
         Note this bypasses ``RAGRetrievalService.search()`` and therefore the
         result cache.  For a fair latency comparison the hybrid path below must
-        also bypass it — see ``use_cache=False`` there.
+        also bypass it — see ``use_cache`` on this class.
         """
         return await self._rag._chroma_search(query, top_k)
 
     async def _search_hybrid(self, query: str, top_k: int) -> list:
         """Production pipeline: vector + KG + RRF fusion (+ reranker).
 
-        ``use_cache=False`` is passed explicitly: ``direct`` cannot use the
-        cache (it calls ``_chroma_search`` directly), so allowing hybrid to hit
-        it would make hybrid's measured latency partly a cache artifact rather
-        than a property of the pipeline.
+        ``use_cache`` defaults to False: ``direct`` cannot use the cache (it
+        calls ``_chroma_search`` directly), so allowing hybrid to hit it would
+        make hybrid's measured latency partly a cache artifact rather than a
+        property of the pipeline.  The ``--repeat`` cache benchmark opts in.
         """
-        return await self._rag.search(query, top_k=top_k, use_cache=False)
+        return await self._rag.search(
+            query, top_k=top_k, use_cache=self._use_cache
+        )
 
     async def _search_rewrite(self, query: str, top_k: int) -> tuple[list, bool]:
         """LLM rewrite, then hybrid retrieval."""
