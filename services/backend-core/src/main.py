@@ -432,6 +432,18 @@ async def readiness():
             llm_health = await llm.health_check()
         except Exception as exc:
             llm_health = {"reachable": False, "detail": str(exc)}
+
+    # Circuit-breaker state.  The breaker is shared by every agent + Mentor, so
+    # without this the only signal that LLM traffic is suspended is a log line —
+    # an operator cannot tell "degraded because the breaker is open" from
+    # "degraded because the upstream is slow", nor which agent tripped it.
+    circuit_breaker = None
+    if llm and hasattr(llm, "circuit_breaker_state"):
+        try:
+            circuit_breaker = llm.circuit_breaker_state()
+        except Exception as exc:
+            circuit_breaker = {"error": str(exc)}
+
     return {
         "status": "ok",
         "service": "backend-core",
@@ -451,4 +463,5 @@ async def readiness():
             "name": settings.llm_embedding_model,
         },
         "llm": llm_health,
+        "circuit_breaker": circuit_breaker,
     }

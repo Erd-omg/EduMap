@@ -477,3 +477,94 @@ async def test_health_check_with_real_api_key() -> None:
     # Should either succeed or fail gracefully, never crash
     assert "reachable" in result
     assert "detail" in result
+
+
+class TestCircuitBreakerObservability:
+    """The breaker must be attributable and queryable.
+
+    One adapter instance is shared by all 6 agents + Mentor, so a bare counter
+    could not answer "which agent suspended LLM traffic?" — the open event and
+    the state snapshot now carry the source.
+    """
+
+    def test_state_snapshot_shape(self, adapter: OpenAICompatibleAdapter) -> None:
+        """circuit_breaker_state() is JSON-serialisable and complete."""
+        import json
+
+        state = adapter.circuit_breaker_state()
+        for field in (
+            "open", "consecutive_failures", "threshold", "recovery_seconds",
+            "seconds_until_retry", "open_count", "last_failing_source",
+            "failure_sources",
+        ):
+            assert field in state, f"missing {field!r}"
+        json.dumps(state)  # must not raise
+        assert state["open"] is False
+        assert state["open_count"] == 0
+
+    def test_attribution_recorded(self, adapter: OpenAICompatibleAdapter) -> None:
+        """The failing agent is named, not just counted."""
+        adapter._record_failure("designer")
+        adapter._record_failure("designer")
+        adapter._record_failure("coder")
+
+        state = adapter.circuit_breaker_state()
+        assert state["last_failing_source"] == "coder"
+        assert state["failure_sources"] == {"designer": 2, "coder": 1}
+
+    def test_open_count_increments_per_trip(self) -> None:
+        """Re-opening after recovery is visible as a rising count.
+
+        Without this, a flap-loop (open → expire → immediately re-open) is
+        indistinguishable from a single outage.
+        """
+        a = OpenAICompatibleAdapter(
+            api_key="k", circuit_breaker_threshold=1, circuit_breaker_recovery_s=0,
+        )
+        a._record_failure("planner")
+        assert a.circuit_breaker_state()["open_count"] == 1
+
+        # recovery_s=0 means the very next check closes it, then re-trip.
+        a._is_circuit_open()
+        a._record_failure("planner")
+        assert a.circuit_breaker_state()["open_count"] == 2
+
+    def test_success_clears_attribution(self, adapter: OpenAICompatibleAdapter) -> None:
+        """A success resets counters AND attribution — no stale blame."""
+        adapter._record_failure("designer")
+        assert adapter.circuit_breaker_state()["failure_sources"]
+
+        adapter._record_success()
+        state = adapter.circuit_breaker_state()
+        assert state["failure_sources"] == {}
+        assert state["last_failing_source"] == ""
+        assert state["consecutive_failures"] == 0
+
+    def test_seconds_until_retry_is_reported(self) -> None:
+        """An open breaker reports how long until it will be retried."""
+        a = OpenAICompatibleAdapter(
+            api_key="k", circuit_breaker_threshold=1, circuit_breaker_recovery_s=60,
+        )
+        a._record_failure("mentor")
+        state = a.circuit_breaker_state()
+        assert state["open"] is True
+        assert 0 < state["seconds_until_retry"] <= 60
+
+    def test_source_defaults_when_unknown(self, adapter: OpenAICompatibleAdapter) -> None:
+        """A caller that doesn't know its name still works (http path)."""
+        adapter._record_failure()
+        state = adapter.circuit_breaker_state()
+        assert state["consecutive_failures"] == 1
+        assert state["failure_sources"] == {}
+
+    def test_health_check_reports_circuit_open(self) -> None:
+        """health_check surfaces the breaker so /health/ready is actionable."""
+        import asyncio
+
+        a = OpenAICompatibleAdapter(
+            api_key="k", circuit_breaker_threshold=1, circuit_breaker_recovery_s=60,
+        )
+        a._record_failure("planner")
+        result = asyncio.run(a.health_check())
+        assert result["reachable"] is False
+        assert result["detail"] == "circuit_open"

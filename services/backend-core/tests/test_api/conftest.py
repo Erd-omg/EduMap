@@ -187,6 +187,13 @@ def _create_test_app(**overrides) -> FastAPI:
     async def health():
         return {"status": "ok", "service": "backend-core", "version": "0.1.0"}
 
+    # NOTE: /health/ready is re-stubbed here because the real handler in
+    # main.py closes over the MODULE-LEVEL ``app`` (main.py:371), so it reads
+    # production app state and cannot see this test app's state.  Delegating to
+    # it would therefore return nulls for everything this fixture sets up.
+    # The real handler's contract is covered directly in
+    # tests/test_api/test_readiness.py, which drives ``main.readiness()`` with
+    # the real app object.
     @app.get("/health/ready")
     async def ready():
         return {"status": "ok", "embedding_model": "mocked"}

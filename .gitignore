@@ -45,3 +45,9 @@ coverage/
 test-results/
 playwright-report/
 playwright/.cache/
+
+# Mutation-testing artifacts (scripts/mutation_check.py backups, mutmut leftovers)
+services/backend-core/*.mutbak
+services/backend-core/src/**/*.mutbak
+services/backend-core/mutants/
+services/backend-core/.mutmut-cache

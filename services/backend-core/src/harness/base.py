@@ -143,7 +143,9 @@ class BaseAgent(ToolInjectionMixin, MemoryAwareMixin, ABC):
                 return self._llm._is_circuit_open()  # type: ignore[union-attr]
 
             def _cb_record() -> None:
-                self._llm._record_failure()  # type: ignore[union-attr]
+                # Pass the agent name so a shared adapter can attribute which
+                # agent contributed to opening the breaker.
+                self._llm._record_failure(self._agent_name)  # type: ignore[union-attr]
 
             cb_check = _cb_check if has_circuit_breaker else None
             cb_record = _cb_record if has_circuit_breaker else None

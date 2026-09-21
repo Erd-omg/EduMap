@@ -143,6 +143,18 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
         self._circuit_open_until: float = 0.0
         self._circuit_threshold = circuit_breaker_threshold
         self._circuit_recovery = circuit_breaker_recovery_s
+        # Observability for the breaker.  One adapter instance is shared by
+        # every agent + Mentor, so a bare counter cannot answer "which agent
+        # opened it?" — these attributes make the breaker attributable and
+        # queryable instead of a silent log line.
+        #
+        # ``_circuit_source`` records who fed the failure that tripped it;
+        # ``_circuit_open_count`` counts how many times it has tripped, so a
+        # flap-loop (open → expire → immediately re-open) is visible as a
+        # rising count rather than indistinguishable from a single outage.
+        self._circuit_source: str = ""
+        self._circuit_open_count: int = 0
+        self._failure_sources: dict[str, int] = {}
         # Token usage tracking (extracted from API responses)
         self._last_usage: dict[str, int] = {}
         # Rate limiter — max 10 concurrent LLM calls per adapter instance
@@ -160,22 +172,65 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
             return False
         return True
 
-    def _record_failure(self) -> None:
-        """Increment consecutive failure count, open circuit if threshold reached."""
+    def _record_failure(self, source: str = "") -> None:
+        """Increment consecutive failure count, open circuit if threshold reached.
+
+        ``source`` names the caller (agent name) so the open event and the
+        ``circuit_breaker`` health report can attribute the failure.  Optional
+        so existing callers that only know "the HTTP call failed" still work.
+        """
         import time
         self._consecutive_failures += 1
+        if source:
+            self._failure_sources[source] = self._failure_sources.get(source, 0) + 1
+            self._circuit_source = source
         if self._consecutive_failures >= self._circuit_threshold:
             self._circuit_open_until = time.monotonic() + self._circuit_recovery
+            self._circuit_open_count += 1
+            # Log the attribution prominently: with a shared adapter this is
+            # the only place that says WHICH agent suspended LLM traffic.
             logger.warning(
-                "LLM circuit breaker OPEN — %d consecutive failures, suspending calls for %ds",
+                "LLM circuit breaker OPEN (#%d) — %d consecutive failures, "
+                "suspending ALL LLM calls for %ds; failing source=%s, "
+                "failure_sources=%s",
+                self._circuit_open_count,
                 self._consecutive_failures,
                 self._circuit_recovery,
+                self._circuit_source or "unknown",
+                dict(self._failure_sources),
             )
 
     def _record_success(self) -> None:
         """Reset consecutive failure count on a successful call."""
         if self._consecutive_failures > 0:
             self._consecutive_failures = 0
+        if self._failure_sources:
+            self._failure_sources.clear()
+        self._circuit_source = ""
+
+    def circuit_breaker_state(self) -> dict:
+        """Snapshot the breaker for health endpoints and debugging.
+
+        Returns a plain dict (JSON-serialisable) rather than logging, so an
+        operator can answer "is the LLM degraded right now, and who caused it"
+        without grepping logs.
+        """
+        import time
+        remaining = 0.0
+        if self._circuit_open_until:
+            remaining = max(0.0, self._circuit_open_until - time.monotonic())
+        return {
+            "open": self._is_circuit_open(),
+            "consecutive_failures": self._consecutive_failures,
+            "threshold": self._circuit_threshold,
+            "recovery_seconds": self._circuit_recovery,
+            "seconds_until_retry": round(remaining, 2),
+            # A count > 1 means the breaker has re-tripped after recovering,
+            # which points at an ongoing upstream outage rather than a blip.
+            "open_count": self._circuit_open_count,
+            "last_failing_source": self._circuit_source,
+            "failure_sources": dict(self._failure_sources),
+        }
 
     async def health_check(self) -> dict:
         """Check if the LLM endpoint is reachable and authenticating correctly.
@@ -373,7 +428,7 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
                         await asyncio.sleep(wait)
                         continue
 
-            self._record_failure()
+            self._record_failure("http")
             logger.error("LLM call failed after %d retries: %s", self.max_retries, last_exc)
             return {"_degraded": True}
 
@@ -449,7 +504,7 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
                     try:
                         resp.raise_for_status()
                     except httpx.HTTPStatusError:
-                        self._record_failure()
+                        self._record_failure("http_stream")
                         logger.error("LLM stream returned HTTP %d", resp.status_code)
                         return
 
