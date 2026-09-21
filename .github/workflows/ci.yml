@@ -91,25 +91,60 @@ jobs:
   integration-tests:
     runs-on: ubuntu-latest
     services:
+      # NOTE: `ports` is required.  Service containers run on their own Docker
+      # network; without publishing a port the job (which runs on the runner
+      # host, not in that network) cannot reach them — the container reports
+      # healthy and the client still gets ECONNREFUSED.
       neo4j:
         image: neo4j:5-community
         env:
           NEO4J_AUTH: none
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "wget -qO- http://localhost:7474 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
       chromadb:
         image: chromadb/chroma:1.5.9
+        ports:
+          - 8000:8000
       postgres:
         image: postgres:16-alpine
         env:
           POSTGRES_USER: edumap
           POSTGRES_PASSWORD: edumap_dev
           POSTGRES_DB: edumap
+        ports:
+          - 5432:5432
       redis:
         image: redis:7-alpine
+        ports:
+          - 6379:6379
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Wait for Neo4j to accept connections
+        run: |
+          # The container is marked healthy before Bolt is necessarily ready;
+          # poll the actual port so the seed step doesn't race it.
+          for i in $(seq 1 30); do
+            if python -c "
+          import socket, sys
+          s = socket.socket(); s.settimeout(2)
+          sys.exit(0 if s.connect_ex(('127.0.0.1', 7687)) == 0 else 1)
+          "; then
+              echo "Neo4j Bolt port is open"
+              exit 0
+            fi
+            echo "waiting for neo4j bolt... ($i/30)"
+            sleep 5
+          done
+          echo "Neo4j Bolt port never opened" >&2
+          exit 1
       - name: Install dependencies
         run: |
           pip install -r services/backend-core/requirements.txt
