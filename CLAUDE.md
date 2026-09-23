@@ -112,6 +112,7 @@ src/harness/base.py                 (Agent 生命周期)
 src/tools/registry.py               (工具执行 + 超时)
 src/utils/llm_adapter.py            (熔断状态与归因)
 src/main.py                         (readiness 契约)
+src/rag/chunking/semantic_chunker.py (降级分支)
 ```
 
 变异体是**手写**的而非通用 AST 变异：目的是探测本仓真正依赖的那些不变量（reducer 语义、失败归因、重试边界），而不是产出上百个等价变异体。
@@ -128,26 +129,31 @@ src/main.py                         (readiness 契约)
 - **`router.py` 的实时进度合并**必须应用与图相同的 reducer（`_STATE_REDUCERS`，由注解派生）。若新增 reducer 却绕过它，`/status` 快照会与图真实状态漂移。
 - **并行分支的失败语义**：一条分支失败不会中止另一条（LangGraph 会把两条都跑完），失败分支的 LLM 调用已经花掉。
 - **`readiness()` 闭包捕获的是 `main.py` 的模块级 `app`**，因此 `_create_test_app()` 的测试 app 看不到它（conftest 里仍有一个只返回 `{"status":"ok"}` 的桩）。真实契约由 `tests/test_api/test_readiness.py` 直接调 `main.readiness()` 覆盖。
-- **三个用例会挂起（既有问题，与本次改动无关；均已用 `git worktree` 检出 d0b470e 复现）**——同一个根因：**测试路径上加载了真实的 `SentenceTransformer` 嵌入模型**，进程内加载耗时长且不稳定（有时秒过、有时挂死 >20 分钟）。
+- **三个测试进程内加载真实嵌入模型导致的挂起——已修复（2026-09-23）**。根因：测试路径上会加载真实的 `SentenceTransformer`，进程内加载慢且不稳定（有时秒过、有时挂死 >20 分钟），全量跑是否挂取决于执行顺序，因此长期未被发现。
 
-  | 用例 | 触发路径 |
-  |---|---|
-  | `test_api/test_resources.py::TestResourcesUpload::test_upload_text_file` | 上传接口 → `DocumentParser.parse_and_index` → `parser.py:289-291` 回退加载真实模型（conftest 未设 `app.state._embedding_model`） |
-  | `test_rag/test_chunking.py::TestSemanticChunkerChunk::test_single_sentence` | `chunk()` → `_load_model()`（`semantic_chunker.py:66`） |
-  | `test_rag/test_chunking.py::TestSemanticChunkerChunk::test_fallback_when_model_none` | 该用例**本意**是测 `_model=None` 的降级路径，但 `chunk()` 会调 `_load_model()` **把模型重新加载回来**，于是降级路径根本没被走到，反而去加载模型 |
+  | 用例 | 原触发路径 | 修法 |
+  |---|---|---|
+  | `test_api/test_resources.py::TestResourcesUpload::test_upload_text_file` | 上传接口 → `DocumentParser.parse_and_index` → `parser.py:289-291` 回退加载真实模型 | conftest 注入 mock 的 `_embedding_model`（返回确定性向量） |
+  | `test_rag/test_chunking.py::TestSemanticChunkerChunk::test_single_sentence` | `chunk()` → `_load_model()` | 打桩 `_load_model` |
+  | `test_rag/test_chunking.py::TestSemanticChunkerChunk::test_fallback_when_model_none` | 同上，且**断言目标从未被覆盖** | 打桩 `_load_model` + 用日志区分两条降级路径 |
 
-  模型已缓存（`~/.cache/huggingface`），所以不是下载问题，是进程内加载 + 可能的 HF 联网检查。**复现方式是"每次必挂"，但全量跑时是否挂取决于执行顺序**——这让它长期未被发现。
+  **修完后全量测试从「4–5 分钟且可能挂死」变为约 60 秒。**
 
-  **修复方向**：① 测试里注入 mock 的 `_embedding_model` / 打桩 `SentenceTransformer`；② `test_fallback_when_model_none` 应改为直接测 `_find_boundaries`-级别的降级分支，或 mock 掉 `_load_model`，否则它连自己的断言目标都没覆盖到。**注意后两点是真实的测试缺陷，不只是"慢"。**
+  **两个真实的测试缺陷（不只是慢），值得引以为戒**：
 
-  **临时绕过**：`pytest tests/ --deselect tests/test_api/test_resources.py::TestResourcesUpload::test_upload_text_file --deselect tests/test_rag/test_chunking.py::TestSemanticChunkerChunk::test_single_sentence --deselect tests/test_rag/test_chunking.py::TestSemanticChunkerChunk::test_fallback_when_model_none`
+  1. **`test_fallback_when_model_none` 的断言目标是空的。** 它设 `_model = None`，但 `chunk()` 开头会调 `_load_model()`，而 `_load_model` 只在 `_model is not None` 时提前返回——于是 `None` 触发了**真实模型加载**，降级分支根本没走到。
+  2. **即使修好上面那点，"fallback 被调用了"仍不足以验证该分支。** `chunk()` 有**两条**路径进入 `_paragraph_fallback`：显式的 `if self._model is None`，以及 `encode()` 外面的 `except`。`_model = None` 时编码路径会抛 `AttributeError` 被 `except` 接住，同样调用 fallback——所以把显式分支改成 `if False:` 测试**依然通过**。正确做法是断言"没有出现 `Embedding failed` 警告"（只有 except 路径会记这条日志），以此区分两条路径。**这两点都是先写错、靠变异验证才发现并修正的。**
+  3. 顺带修正：`test_upload_text_file` 原先把 `kp_id` 当 query param 传，而路由定义的是 **Form** 字段（`router.py:46`），参数被静默忽略——原来的 `in (200, 422, 500)` 弱断言把它盖住了。
+
+  **变异验证已加入 `mutation_check.py`**（`semantic_chunker` 两条），确保不会回退。
 
 ### 排障提醒：慢 ≠ 挂，且不要靠百分比定位
 
 排查上述挂起时我反复误判，浪费了大量时间。教训：
 
-- 全量测试正常约 **4–5 分钟**（其中 `test_rag` 约 55s、`test_kg` 约 37s、`test_harness` 约 13s 是真实耗时，不是卡住）。
+- 全量测试现在约 **60 秒**（修完模型加载后）。若超过 ~3 分钟，基本可以确定是挂了。
 - **不要用百分比估算卡在哪个用例**——我按 dot-stream 百分比猜了三次，三次都错。正确做法：`pytest -v`，然后找**最后一条没有 PASSED/FAILED verdict 的 `::` 行**；但注意 pytest 会缓冲输出，这一行可能是"刚启动"而非"卡住"，需结合耗时判断。
 - **最有效的定位手段是按目录分别跑**（`for d in tests/*/; do pytest $d; done`），每个目录单独跑通常都能跑完，从而快速排除大部分范围。
 - **`--timeout` 不可用**：本仓没装 `pytest-timeout`，会直接报参数错误。
 - 怀疑卡死时先 `pkill -f pytest` 清残留——被杀的后台运行会留下孤儿进程，干扰后续判断（我自己制造过 6 个）。
+- **教训**：三次错误假设里，有两次是"读代码猜路径"——实际执行一次或读日志更快。**怀疑某处加载了重资源时，直接在测试路径里 grep `SentenceTransformer` / `\.encode(`，比推理调用链快得多。**

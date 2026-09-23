@@ -19,14 +19,31 @@ class TestResourcesUpload:
     """POST /api/v1/resources/upload — upload a resource."""
 
     def test_upload_text_file(self, client):
-        """Upload a .txt file — flows through DocumentParser and in-memory repo."""
+        """Upload a .txt file — flows through DocumentParser and in-memory repo.
+
+        Previously asserted only ``status_code in (200, 422, 500)`` — which
+        accepts any outcome — and hung the suite: with no ``_embedding_model``
+        on app state, ``DocumentParser`` loaded a real ``SentenceTransformer``
+        in-process.  The fixture now supplies a stub model, and the assertions
+        below pin the actual response contract.
+        """
         content = b"Hello, this is a test document about arrays."
+        # kp_id/kp_name are Form fields on the upload route (router.py:46-47),
+        # not query params — the old test passed them in the URL, where they
+        # were silently ignored (its `in (200, 422, 500)` assertion hid that).
         resp = client.post(
-            "/api/v1/resources/upload?kp_id=kp-test&kp_name=Test",
+            "/api/v1/resources/upload",
             files={"file": ("test.txt", content, "text/plain")},
+            data={"kp_id": "kp-test", "kp_name": "Test"},
         )
-        # Accept any response (depends on real ChromaDB + parser)
-        assert resp.status_code in (200, 422, 500)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        # Contract the library view depends on.
+        assert body["name"] == "test.txt"
+        assert body["kp_id"] == "kp-test", (
+            "kp_id must round-trip — a query param here would be ignored"
+        )
+        assert body["id"], "uploaded resource must have an id"
 
 
 class TestResourcesSync:

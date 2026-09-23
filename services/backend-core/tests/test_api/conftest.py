@@ -256,6 +256,23 @@ def _create_test_app(**overrides) -> FastAPI:
         "mastery": 0.7, "cramming_score": 0.0,
     })
 
+    # Stub the embedding model so no test loads a real SentenceTransformer.
+    # ``DocumentParser.parse_and_index`` (src/resources/parser.py:289-291) falls
+    # back to ``SentenceTransformer("BAAI/bge-small-zh-v1.5")`` when this is
+    # unset — an in-process model load that is slow and can hang the whole
+    # suite (test_upload_text_file did exactly that).  The stub returns
+    # deterministic vectors so indexing code still has something to embed.
+    embedding_model = MagicMock()
+
+    def _encode(texts, **_kw):
+        import numpy as np
+
+        if isinstance(texts, str):
+            texts = [texts]
+        return np.array([[0.1] * 8 for _ in texts], dtype="float32")
+
+    embedding_model.encode.side_effect = _encode
+
     # Mock for ResourceRepository (in-memory storage)
     resource_repo = _make_resource_repo_mock()
 
@@ -265,6 +282,8 @@ def _create_test_app(**overrides) -> FastAPI:
         "memory_ops": _make_memory_ops_mock(),
         "rag_service": AsyncMock(),
         "vector_index": AsyncMock(),
+        # Pre-loaded so parsers/chunkers never reach for the real model.
+        "_embedding_model": embedding_model,
         "path_service": path_service,
         "forgetting_service": forgetting_service,
         "anti_gaming_service": anti_gaming_service,

@@ -55,6 +55,7 @@ TEST_TARGETS = [
     "tests/test_harness/",
     "tests/test_tools/",
     "tests/test_utils/",
+    "tests/test_rag/test_chunking.py",
 ]
 
 # Default mutation targets: the modules where a silent logic error reaches
@@ -67,6 +68,7 @@ DEFAULT_TARGETS = [
     "src/tools/registry.py",
     "src/utils/llm_adapter.py",
     "src/main.py",
+    "src/rag/chunking/semantic_chunker.py",
 ]
 
 
@@ -201,6 +203,18 @@ MUTATIONS: dict[str, list[Mutation]] = {
             "readiness: circuit breaker block dropped",
             r'        "circuit_breaker": circuit_breaker,',
             '        "circuit_breaker": None,',
+        ),
+    ],
+    "src/rag/chunking/semantic_chunker.py": [
+        Mutation(
+            "chunker: explicit None-model branch disabled",
+            r"        if self\._model is None:\n            return self\._paragraph_fallback\(text\)",
+            "        if False:\n            return self._paragraph_fallback(text)",
+        ),
+        Mutation(
+            "chunker: model reloaded even when already set",
+            r"        if self\._model is not None:\n            return",
+            "        if False:\n            return",
         ),
     ],
     "src/tools/registry.py": [

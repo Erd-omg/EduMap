@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -227,19 +229,71 @@ class TestSemanticChunkerChunk:
         assert chunker.chunk("") == []
         assert chunker.chunk("   ") == []
 
-    def test_single_sentence(self) -> None:
-        """Single sentence is returned as a single chunk."""
+    def test_single_sentence(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Single sentence is returned as a single chunk.
+
+        ``_load_model`` is stubbed: without it this test loads the real
+        ``SentenceTransformer`` in-process (slow, and it can hang the whole
+        suite).  The single-sentence path returns before ``_model`` is ever
+        consulted, so the stub does not weaken the assertion.
+        """
         chunker = SemanticChunker()
+        monkeypatch.setattr(chunker, "_load_model", lambda: None)
+
         result = chunker.chunk("仅此一句。")
         assert result == ["仅此一句。"]
 
-    def test_fallback_when_model_none(self) -> None:
-        """When _model is None, paragraph fallback is used (no error)."""
+    def test_fallback_when_model_none(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """When no embedding model is available, the paragraph fallback is used.
+
+        Two things were wrong with the previous version:
+
+        1. It set ``_model = None``, but ``chunk()`` calls ``_load_model()``
+           first, which saw ``None`` and **loaded the real model** — so the
+           fallback branch was never reached (and the test loaded a real
+           ``SentenceTransformer``, hanging the suite).
+        2. Even with that fixed, asserting "fallback was called" is not enough:
+           ``chunk()`` has **two** paths into ``_paragraph_fallback`` — the
+           explicit ``if self._model is None`` check, and the ``except`` around
+           ``self._model.encode()``.  With ``_model = None`` the encode path
+           raises ``AttributeError`` and reaches the fallback anyway, so
+           disabling the explicit check left the test green.
+
+        Stubbing ``_load_model`` keeps ``_model`` None, and the raise-guard
+        asserts the explicit branch is what runs — not the exception path.
+        """
         chunker = SemanticChunker()
-        chunker._model = None  # force no model
+        monkeypatch.setattr(chunker, "_load_model", lambda: None)
+        chunker._model = None  # no embedding model available
+
         text = "段落一。\n\n段落二。"
-        result = chunker.chunk(text)
-        assert len(result) >= 1
+        calls: list[str] = []
+        real_fallback = chunker._paragraph_fallback
+
+        def spy_fallback(t: str):
+            calls.append(t)
+            return real_fallback(t)
+
+        chunker._paragraph_fallback = spy_fallback  # type: ignore[method-assign]
+
+        # Distinguish the two paths into _paragraph_fallback.  The exception
+        # path (``None.encode()`` -> AttributeError -> except) logs
+        # "Embedding failed, falling back"; the explicit ``_model is None``
+        # branch does not.  Asserting the warning is ABSENT is what proves the
+        # explicit check ran — merely asserting "fallback was called" cannot,
+        # which is how the earlier version passed while broken.
+        with caplog.at_level(logging.WARNING):
+            result = chunker.chunk(text)
+
+        assert not any(
+            "Embedding failed" in r.message for r in caplog.records
+        ), "chunk() took the encode()/except path, not the explicit None check"
+        assert calls == [text], "paragraph fallback was not used"
+        # And the fallback's own contract: paragraphs merge while they fit
+        # under max_chunk_size, so two short paragraphs yield one chunk.
+        assert result == [text], result
 
     def test_fallback_on_embedding_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When encode() raises, fallback is used."""
