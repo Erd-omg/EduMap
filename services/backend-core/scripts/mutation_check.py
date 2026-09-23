@@ -194,8 +194,23 @@ MUTATIONS: dict[str, list[Mutation]] = {
         ),
         Mutation(
             "breaker: state reports closed always",
-            r'            "open": self\._is_circuit_open\(\),',
+            r'            "open": state == "open",',
             '            "open": False,',
+        ),
+        Mutation(
+            "half-open: probe slot not gated (all callers admitted)",
+            r"        if self\._half_open_probe_in_flight:\n            return False",
+            "        if self._half_open_probe_in_flight:\n            return True",
+        ),
+        Mutation(
+            "half-open: probe failure does not re-open",
+            r"        if was_half_open or self\._consecutive_failures >= self\._circuit_threshold:",
+            "        if self._consecutive_failures >= self._circuit_threshold:",
+        ),
+        Mutation(
+            "expiry: half-open collapses back to closed",
+            r'        if time\.monotonic\(\) > self\._circuit_open_until:\n            return "half_open"',
+            '        if time.monotonic() > self._circuit_open_until:\n            return "closed"',
         ),
     ],
     "src/main.py": [

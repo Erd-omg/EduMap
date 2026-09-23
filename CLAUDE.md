@@ -44,7 +44,9 @@ python scripts/mutation_check.py -v        # 幸存者附测试输出
 
 **为什么不用 mutmut**：mutmut 3.8 无法用于本项目。它的 trampoline 硬断言被变异模块名**不得以 `src.` 开头**（`mutmut/stats.py:151`），而本仓的 import 根**就是** `src`（`src/__init__.py` 存在，测试写 `from src.agents... import`），于是每个变异体都触发断言、stats 阶段直接中止。该限制硬编码且不可配置，因此不去改第三方库，而是用脚本自己实现同样的技术（配置见 `scripts/mutation_check.py` 的 `MUTATIONS`）。
 
-`mutation_check.py` 会**在 finally 中无条件恢复**每个被改动的文件——若中途崩溃也可能留下变异体，所以跑完请 `git diff --stat src/` 确认。**注意：脚本运行期间不要编辑 `src/`**，否则会和变异体混在一起。
+`mutation_check.py` 会**在 finally 中无条件恢复**每个被改动的文件——若中途崩溃也可能留下变异体，所以跑完请 `git diff --stat src/` 确认。**注意：脚本运行期间不要编辑 `src/`，否则会和变异体混在一起。**
+
+**⚠️ 绝不要和测试套件并行运行。** 变异脚本会在运行期间**真的改写 `src/` 文件**，此时若有别的 pytest 进程在读这些文件，会看到半成品代码并报出一堆假失败。我曾经把两者同时丢到后台跑，得到 10 个"失败"，全部是幻影——单独重跑即 825 全绿。**串行执行：先跑变异，再跑测试（或反之）。**
 
 ### 让测试走真实入口
 
@@ -125,7 +127,10 @@ src/rag/chunking/semantic_chunker.py (降级分支)
 
 写在这里避免被重新发现或误以为已修：
 
-- **熔断器的恢复仍依赖"到期后有一次成功调用"**：`_record_success` 是唯一重置路径，而熔断期间的降级响应不会调用它。所以上游持续故障时会呈现"到期→试一次→再开 60s"的循环。**归因与可观测性已补**（`circuit_breaker_state()` + `/health/ready` 的 `circuit_breaker` 段，`_circuit_open_count` 让这种 flap 循环可见），但**恢复策略本身未改**——若要让熔断期内的降级响应也算作探活，需要单独决策。
+- **熔断器：已实现标准三态（CLOSED / OPEN / HALF_OPEN）**。恢复窗口到期后进入 HALF_OPEN，**只放行一个探针**请求；探针成功 → CLOSED，失败 → **立即重新熔断**并重置完整恢复窗口。`_try_acquire_slot()` 是获取语义（会占用探针槽），`_is_circuit_open()` / `circuit_breaker_state()` 是**纯读**（不占用，供健康检查调用）。实测持续故障 10 秒：改前 9 次无效调用 → 改后 6 次（每周期 1 探针）。
+  **并发前提**：`_try_acquire_slot` 内**不得出现 `await`**——它靠"单事件循环 + 检查与置位之间无 await"保证原子性。若有人在其中加 await，多个调用者会同时赢得探针；`TestCircuitBreakerConcurrency` 正是守这条的，别删。
+  **两个必须保留的释放路径**：`_call_with_retry_and_cb` 的 `try/except BaseException` 和 `_call_llm_stream` 的 `finally`。它们保证异常/取消/消费者提前中断（GeneratorExit）时释放探针槽——否则熔断器会**永久卡在 HALF_OPEN**，上游恢复后也再不能探测。
+  **仍未改**：`_record_success` 之外的恢复路径没有；若上游长期故障，系统会稳定在"每恢复窗口 1 次探针"的降级状态（这是期望行为）。
 - **`router.py` 的实时进度合并**必须应用与图相同的 reducer（`_STATE_REDUCERS`，由注解派生）。若新增 reducer 却绕过它，`/status` 快照会与图真实状态漂移。
 - **并行分支的失败语义**：一条分支失败不会中止另一条（LangGraph 会把两条都跑完），失败分支的 LLM 调用已经花掉。
 - **`readiness()` 闭包捕获的是 `main.py` 的模块级 `app`**，因此 `_create_test_app()` 的测试 app 看不到它（conftest 里仍有一个只返回 `{"status":"ok"}` 的桩）。真实契约由 `tests/test_api/test_readiness.py` 直接调 `main.readiness()` 覆盖。

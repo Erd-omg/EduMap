@@ -155,55 +155,140 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
         self._circuit_source: str = ""
         self._circuit_open_count: int = 0
         self._failure_sources: dict[str, int] = {}
+        # Half-open probe gate.  After the recovery window expires the breaker
+        # enters HALF_OPEN: exactly ONE caller is allowed through to test the
+        # upstream, and everyone else keeps getting the degraded response.
+        #
+        # Without this the breaker fully closed on expiry and needed
+        # ``threshold`` fresh failures to re-open, so a sustained outage let
+        # `threshold` real calls through every recovery window.  Measured with
+        # threshold=3/recovery=2s: 9 dead-upstream calls in 10s instead of 3.
+        #
+        # A bare flag is sufficient because this object is only ever touched
+        # from one event loop (every caller is async), so check-and-set below
+        # is atomic with respect to the loop.  Guarding with a threading.Lock
+        # would be wrong here, not just unnecessary: the flag is held across an
+        # ``await`` (the probe request), and a lock cannot be held across awaits.
+        self._half_open_probe_in_flight: bool = False
         # Token usage tracking (extracted from API responses)
         self._last_usage: dict[str, int] = {}
         # Rate limiter — max 10 concurrent LLM calls per adapter instance
         self._rate_limit_semaphore = asyncio.Semaphore(10)
 
-    def _is_circuit_open(self) -> bool:
-        """Check if the circuit breaker is open (API calls suspended)."""
+    def _circuit_state(self) -> str:
+        """Return the breaker state: ``closed`` | ``open`` | ``half_open``.
+
+        Pure read — never mutates.  ``half_open`` means the recovery window has
+        elapsed but the upstream is still unverified; a caller may pass only if
+        it wins the probe (see :meth:`_try_acquire_slot`).
+        """
         import time
         if self._circuit_open_until == 0.0:
-            return False
+            return "closed"
         if time.monotonic() > self._circuit_open_until:
-            logger.info("LLM circuit breaker closed — allowing API calls again")
-            self._circuit_open_until = 0.0
-            self._consecutive_failures = 0
+            return "half_open"
+        return "open"
+
+    def _is_circuit_open(self) -> bool:
+        """Whether calls are currently suspended.  Pure read, no side effects.
+
+        Deliberately does NOT consume the half-open probe slot: this is called
+        from read-only paths (``circuit_breaker_state``, ``health_check``) which
+        must not steal the single probe from a real request.
+        """
+        return self._circuit_state() == "open"
+
+    def _try_acquire_slot(self) -> bool:
+        """Whether this caller may make an LLM call.  Consumes the probe slot.
+
+        - ``closed``    → always allowed.
+        - ``open``      → denied.
+        - ``half_open`` → allowed only for the FIRST caller; that caller
+          becomes the probe.  Everyone else is denied until the probe resolves
+          (via :meth:`_record_success` or :meth:`_record_failure`).
+
+        The check-and-set is not interrupted by an await, so with a single
+        event loop exactly one caller can win.
+        """
+        state = self._circuit_state()
+        if state == "closed":
+            return True
+        if state == "open":
             return False
+        # half_open
+        if self._half_open_probe_in_flight:
+            return False
+        self._half_open_probe_in_flight = True
+        logger.info(
+            "LLM circuit breaker HALF_OPEN — releasing one probe request "
+            "(open #%d, was open for %ds)",
+            self._circuit_open_count,
+            self._circuit_recovery,
+        )
         return True
 
     def _record_failure(self, source: str = "") -> None:
-        """Increment consecutive failure count, open circuit if threshold reached.
+        """Record a failure; open the circuit if the threshold is reached.
 
         ``source`` names the caller (agent name) so the open event and the
         ``circuit_breaker`` health report can attribute the failure.  Optional
         so existing callers that only know "the HTTP call failed" still work.
+
+        In HALF_OPEN a single failure re-opens immediately — the probe proved
+        the upstream is still down, so there is nothing to learn from letting
+        more calls through.
         """
         import time
+        was_half_open = self._circuit_state() == "half_open"
+        self._half_open_probe_in_flight = False
         self._consecutive_failures += 1
         if source:
             self._failure_sources[source] = self._failure_sources.get(source, 0) + 1
             self._circuit_source = source
-        if self._consecutive_failures >= self._circuit_threshold:
+
+        if was_half_open or self._consecutive_failures >= self._circuit_threshold:
+            # Re-arm the full recovery window from now.
             self._circuit_open_until = time.monotonic() + self._circuit_recovery
             self._circuit_open_count += 1
             # Log the attribution prominently: with a shared adapter this is
             # the only place that says WHICH agent suspended LLM traffic.
             logger.warning(
-                "LLM circuit breaker OPEN (#%d) — %d consecutive failures, "
+                "LLM circuit breaker OPEN (#%d) — %s; %d consecutive failures, "
                 "suspending ALL LLM calls for %ds; failing source=%s, "
                 "failure_sources=%s",
                 self._circuit_open_count,
+                "probe failed while HALF_OPEN" if was_half_open else "threshold reached",
                 self._consecutive_failures,
                 self._circuit_recovery,
                 self._circuit_source or "unknown",
                 dict(self._failure_sources),
             )
 
+    def _release_probe_slot(self) -> None:
+        """Release the half-open probe slot WITHOUT recording an outcome.
+
+        Used on an exceptional exit (or cancellation) where the request never
+        produced a verdict.  The failure/success counters are left untouched —
+        we learned nothing about the upstream — but the slot is freed so a
+        later caller can probe again.  Without this, an unexpected exception
+        would strand the breaker in HALF_OPEN permanently.
+        """
+        self._half_open_probe_in_flight = False
+
     def _record_success(self) -> None:
-        """Reset consecutive failure count on a successful call."""
-        if self._consecutive_failures > 0:
-            self._consecutive_failures = 0
+        """Reset the breaker on a successful call.
+
+        A success while HALF_OPEN is the probe succeeding, so the circuit
+        closes fully; a success while CLOSED just clears the failure streak.
+        """
+        self._half_open_probe_in_flight = False
+        if self._circuit_open_until != 0.0:
+            logger.info(
+                "LLM circuit breaker CLOSED — probe succeeded after %d open(s)",
+                self._circuit_open_count,
+            )
+        self._circuit_open_until = 0.0
+        self._consecutive_failures = 0
         if self._failure_sources:
             self._failure_sources.clear()
         self._circuit_source = ""
@@ -213,14 +298,16 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
 
         Returns a plain dict (JSON-serialisable) rather than logging, so an
         operator can answer "is the LLM degraded right now, and who caused it"
-        without grepping logs.
+        without grepping logs.  Pure read — safe to call from health checks.
         """
         import time
+        state = self._circuit_state()
         remaining = 0.0
         if self._circuit_open_until:
             remaining = max(0.0, self._circuit_open_until - time.monotonic())
         return {
-            "open": self._is_circuit_open(),
+            "state": state,                      # closed | open | half_open
+            "open": state == "open",
             "consecutive_failures": self._consecutive_failures,
             "threshold": self._circuit_threshold,
             "recovery_seconds": self._circuit_recovery,
@@ -228,6 +315,7 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
             # A count > 1 means the breaker has re-tripped after recovering,
             # which points at an ongoing upstream outage rather than a blip.
             "open_count": self._circuit_open_count,
+            "probe_in_flight": self._half_open_probe_in_flight,
             "last_failing_source": self._circuit_source,
             "failure_sources": dict(self._failure_sources),
         }
@@ -397,10 +485,32 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
         circuit and either returns a degraded response dict (containing a
         ``_degraded`` key) or raises ``httpx.HTTPStatusError`` as a last resort.
         """
-        if self._is_circuit_open():
-            logger.warning("LLM circuit breaker open — returning degraded response")
+        if not self._try_acquire_slot():
+            logger.warning(
+                "LLM circuit breaker %s — returning degraded response",
+                self._circuit_state(),
+            )
             return {"_degraded": True}
 
+        try:
+            return await self._call_with_slot(method, url, payload)
+        except BaseException:
+            # The probe slot must be released on ANY exit, including exception
+            # types the retry loop does not catch (it only catches httpx
+            # errors) and cancellation.  Leaking the slot would strand the
+            # breaker in HALF_OPEN forever — no further probe could ever be
+            # granted, so the service would never recover even after the
+            # upstream came back.
+            self._release_probe_slot()
+            raise
+
+    async def _call_with_slot(
+        self,
+        method: str,
+        url: str,
+        payload: dict[str, Any],
+    ) -> dict:
+        """The retry loop itself — split out so the caller can guarantee slot release."""
         async with self._rate_limit_semaphore:
             last_exc: Exception | None = None
             for attempt in range(self.max_retries):
@@ -478,8 +588,11 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
             return
 
         # For streaming, check circuit breaker + rate limit without calling
-        if self._is_circuit_open():
-            logger.warning("LLM circuit breaker open — returning degraded stream response")
+        if not self._try_acquire_slot():
+            logger.warning(
+                "LLM circuit breaker %s — returning degraded stream response",
+                self._circuit_state(),
+            )
             degraded = "⚠️ AI 服务暂时不可用，请稍后再试。\n\n您可以继续浏览已生成的学习资源、查看知识图谱和学习路径。"
             for i in range(0, len(degraded), 12):
                 yield degraded[i:i + 12]
@@ -494,44 +607,63 @@ class OpenAICompatibleAdapter(BaseLLMAdapter):
             "stream": True,
         }
 
-        async with self._rate_limit_semaphore:
-            async with httpx.AsyncClient(timeout=self.timeout + 60) as client:
-                async with client.stream(
-                    "POST", url,
-                    json=payload,
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                ) as resp:
-                    try:
-                        resp.raise_for_status()
-                    except httpx.HTTPStatusError:
-                        self._record_failure("http_stream")
-                        logger.error("LLM stream returned HTTP %d", resp.status_code)
-                        return
+        # Streaming holds the probe slot for the lifetime of the generator.  A
+        # consumer that abandons the stream (breaks out, disconnects) triggers
+        # GeneratorExit, and an upstream error can raise — both must release
+        # the slot or the breaker is stranded in HALF_OPEN.
+        slot_released = False
 
-                    last_data: dict | None = None
-                    async for line in resp.aiter_lines():
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            if data_str.strip() == "[DONE]":
-                                break
-                            try:
-                                chunk = json.loads(data_str)
-                                last_data = chunk
-                                delta = chunk["choices"][0].get("delta", {})
-                                content = delta.get("content")
-                                if content is not None:
-                                    yield content
-                            except (json.JSONDecodeError, KeyError, IndexError):
-                                continue
+        def _release_once() -> None:
+            nonlocal slot_released
+            if not slot_released:
+                slot_released = True
+                self._release_probe_slot()
 
-            if last_data:
-                usage_data = last_data.get("usage", {}) or last_data.get("x-usage", {}) or {}
-                self._last_usage = {
-                    "prompt_tokens": usage_data.get("prompt_tokens", 0),
-                    "completion_tokens": usage_data.get("completion_tokens", 0),
-                    "total_tokens": usage_data.get("total_tokens", 0),
-                }
-            self._record_success()
+        try:
+            async with self._rate_limit_semaphore:
+                async with httpx.AsyncClient(timeout=self.timeout + 60) as client:
+                    async with client.stream(
+                        "POST", url,
+                        json=payload,
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                    ) as resp:
+                        try:
+                            resp.raise_for_status()
+                        except httpx.HTTPStatusError:
+                            self._record_failure("http_stream")
+                            logger.error("LLM stream returned HTTP %d", resp.status_code)
+                            return
+
+                        last_data: dict | None = None
+                        async for line in resp.aiter_lines():
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                if data_str.strip() == "[DONE]":
+                                    break
+                                try:
+                                    chunk = json.loads(data_str)
+                                    last_data = chunk
+                                    delta = chunk["choices"][0].get("delta", {})
+                                    content = delta.get("content")
+                                    if content is not None:
+                                        yield content
+                                except (json.JSONDecodeError, KeyError, IndexError):
+                                    continue
+
+                if last_data:
+                    usage_data = last_data.get("usage", {}) or last_data.get("x-usage", {}) or {}
+                    self._last_usage = {
+                        "prompt_tokens": usage_data.get("prompt_tokens", 0),
+                        "completion_tokens": usage_data.get("completion_tokens", 0),
+                        "total_tokens": usage_data.get("total_tokens", 0),
+                    }
+                slot_released = True   # _record_success frees the slot
+                self._record_success()
+        finally:
+            # Covers the paths that never reached _record_success/_record_failure:
+            # GeneratorExit (consumer abandoned the stream), cancellation, and
+            # any transport error that escapes the inner handlers.
+            _release_once()
 
     @staticmethod
     def _mock_response() -> str:
