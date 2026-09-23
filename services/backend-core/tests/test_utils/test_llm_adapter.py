@@ -688,10 +688,38 @@ class TestCircuitBreakerHalfOpen:
         assert a._try_acquire_slot() is True
 
     def test_health_check_does_not_consume_probe(self) -> None:
+        """A readiness probe must not steal the half-open probe slot.
+
+        ``health_check`` calls ``_is_circuit_open`` for its "circuit_open"
+        verdict.  If that consumed the slot, a health check would leave the
+        breaker permanently unable to probe.  The HTTP call is stubbed — the
+        test is about slot bookkeeping, not network reachability, and hitting
+        the real endpoint made this test wait ~10s for a timeout.
+        """
         a = self._breaker(threshold=1, recovery=0.0)
         a._record_failure("planner")
 
-        asyncio.run(a.health_check())   # read-only probe of readiness
+        # Stub the transport: the test is about slot bookkeeping, not
+        # reachability.  A real call here waited ~10s for a network timeout.
+        class _Resp:
+            status_code = 200
+
+        class _Client:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, *a, **kw):
+                return _Resp()
+
+        with patch("httpx.AsyncClient", _Client):
+            asyncio.run(a.health_check())   # read-only probe of readiness
+
         assert a._try_acquire_slot() is True
 
     def test_release_probe_slot_frees_without_verdict(self) -> None:

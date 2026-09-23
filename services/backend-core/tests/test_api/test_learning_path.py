@@ -8,8 +8,17 @@ class TestLearningPathEndpoints:
     """Learning path GET endpoints."""
 
     def test_get_path_returns_200(self, client):
+        """The path endpoint returns the PersonalisedPath contract.
+
+        The name said "returns_200" but the assertion accepted 404 too — the
+        name promised more than it checked.  ``path_service`` is mocked to
+        return a valid path in this fixture, so 200 is the real outcome.
+        """
         resp = client.get("/api/v1/learning-path/cs101?user_id=test-user")
-        assert resp.status_code in (200, 404)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["course_id"] == "cs101"
+        assert body["user_id"] == "test-user"
 
     def test_get_next_recommendation_returns_200(self, client):
         resp = client.get("/api/v1/learning-path/cs101/next?user_id=test-user")
@@ -120,13 +129,22 @@ class TestQuizEndpoints:
     """Quiz and anti-gaming endpoints."""
 
     def test_generate_quiz_returns_response(self, client):
-        """Quiz generation requires real agent — may return 500 in mock env."""
+        """Quiz generation returns the question-bank contract.
+
+        Previously asserted ``in (200, 422, 500)`` — which accepts every
+        outcome, including a server error, so it could not fail.  The
+        assessment agent is mocked in this fixture, so 200 is the real outcome.
+        """
         resp = client.post("/api/v1/learning-path/quiz/generate", json={
             "user_id": "test-user",
             "kp_id": "kp-test",
         })
-        # Accept any server response (real agent depends on LLM)
-        assert resp.status_code in (200, 422, 500)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        # Contract the quiz UI reads.
+        assert body["kp_id"] == "kp-test"
+        assert isinstance(body["questions"], list)
+        assert "confidence" in body
 
     def test_anti_gaming_score_returns_200(self, client):
         resp = client.post("/api/v1/learning-path/anti-gaming/score", json={

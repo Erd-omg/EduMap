@@ -46,9 +46,17 @@ class TestKGNodes:
     """Knowledge point operations."""
 
     def test_get_node_returns_200_or_404(self, client):
-        """GET node returns either a found node or 404."""
+        """GET node returns the node contract for a known id.
+
+        Previously asserted ``in (200, 404, 422)``.  The kp_repo is mocked to
+        return a node, so 200 is what actually happens — the loose assertion
+        would have accepted a 404 or a validation error just as happily.
+        """
         resp = client.get("/api/v1/kg/nodes/kp-test")
-        assert resp.status_code in (200, 404, 422)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        for field in ("id", "name", "description", "difficulty"):
+            assert field in body, f"missing {field!r} in node payload"
 
     def test_create_node_returns_200(self, client):
         resp = client.post("/api/v1/kg/nodes", json={
@@ -59,4 +67,6 @@ class TestKGNodes:
             "prerequisites": [],
             "key_concepts": ["test"],
         })
-        assert resp.status_code in (200, 201, 422)
+        # The route creates, so 201 is the real outcome.
+        assert resp.status_code == 201, resp.text
+        assert "id" in resp.json()

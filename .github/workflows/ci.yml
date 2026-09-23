@@ -79,12 +79,14 @@ jobs:
       - name: Install backend-core dependencies
         run: |
           pip install -r services/backend-core/requirements.txt
-          pip install pytest pytest-asyncio pytest-cov
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout
       - name: Run backend-core tests with coverage
         run: |
           cd services/backend-core
           python -m pytest tests/ -v --cov=src --cov-report=term --cov-fail-under=40
-        # NOTE: 738 tests at ~64% coverage.
+        # NOTE: ~825 tests at ~64% coverage.  pytest-timeout comes from
+        # pytest.ini (timeout = 60): without it a stuck test stalls the whole
+        # job with no output.  Keep the two lists in sync when adding plugins.
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -146,7 +148,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r services/backend-core/requirements.txt
-          pip install pytest pytest-asyncio pytest-cov httpx
+          pip install pytest pytest-asyncio pytest-cov pytest-timeout httpx
       - name: Seed Neo4j test data
         run: |
           cd services/backend-core
