@@ -122,6 +122,12 @@ class QuizQuestion(BaseModel):
     options: list[str] | None = None
     correct_answer: str
     knowledge_point_id: str
+    # Author-assigned difficulty on the 1–5 scale, carried through from the
+    # knowledge unit so that grading can weight a correct answer on a hard
+    # item more heavily than one on an easy item (see
+    # src.agents.assessment.grading.difficulty_to_logit).
+    # Optional: a question without it is treated as average difficulty.
+    difficulty: int | None = None
 
 
 class AssessmentOutput(BaseModel):
