@@ -38,6 +38,10 @@ class EpisodicEntry(BaseModel):
     output: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     importance_score: float = 0.5
+    # Embedding of the interaction text. Used by ``recall_relevant`` for the
+    # relevance term; ``None`` for rows written before the column existed, and
+    # for callers that do not supply a vector.
+    embedding: list[float] | None = None
     created_at: datetime | None = None
 
 
