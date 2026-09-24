@@ -53,6 +53,10 @@ class _GraphContext:
         self.coder: CoderAgent | None = None
         self.content_auditor: ContentAuditorAgent | None = None
         self.assessment: AssessmentAgent | None = None
+        # Durable state store (I-6). When None the graph runs with ephemeral
+        # state and progress reporting falls back to the Redis snapshot the
+        # router writes — see src/agents/orchestrator/checkpointing.py.
+        self.checkpointer: object | None = None
 
 
 _graph_ctx = _GraphContext()
@@ -512,10 +516,19 @@ def configure_graph(
     coder: CoderAgent,
     content_auditor: ContentAuditorAgent,
     assessment: AssessmentAgent,
+    checkpointer: object | None = None,
 ) -> None:
     """Inject agent instances into the graph context.
 
     Call this during app startup **once** before ``create_graph()``.
+
+    Args:
+        checkpointer: optional durable state store (an
+            ``AsyncPostgresSaver`` from
+            :class:`src.agents.orchestrator.checkpointing.CheckpointerHolder`).
+            When provided, ``create_graph`` compiles the graph with it, so
+            LangGraph persists every super-step and applies the declared
+            reducers itself. When omitted, state is ephemeral.
     """
     _graph_ctx.planner = planner
     _graph_ctx.guardian = guardian
@@ -523,12 +536,39 @@ def configure_graph(
     _graph_ctx.coder = coder
     _graph_ctx.content_auditor = content_auditor
     _graph_ctx.assessment = assessment
+    _graph_ctx.checkpointer = checkpointer
+
+
+def graph_has_checkpointer() -> bool:
+    """Whether the graph will be compiled with a durable checkpointer.
+
+    Callers must know this because the two cases have different invocation
+    contracts: a checkpointed graph **requires** a ``thread_id`` in its config,
+    while an ephemeral one must be invoked **without** one. Passing a thread
+    config to a graph that has no checkpointer is not merely redundant — it
+    changed runtime behaviour in testing (the astream call stalled), so the
+    decision is made from this single source of truth rather than guessed at
+    each call site.
+    """
+    return _graph_ctx.checkpointer is not None
 
 
 def create_graph() -> StateGraph:
     """Build and return the compiled LangGraph state graph.
 
     The graph must be configured via ``configure_graph()`` before first use.
+
+    When a checkpointer was supplied, the graph is compiled with it: LangGraph
+    then persists a checkpoint at every super-step and owns reducer
+    application, so state survives a restart and can be inspected/travelled
+    afterwards. Without one, behaviour is unchanged (ephemeral state).
+
+    Callers that use a checkpointer **must** pass a ``config`` carrying a
+    ``thread_id`` on every invocation — ``thread_config(session_id)`` builds
+    one. Invoking without it raises, which is LangGraph's own contract and is
+    left to surface rather than being papered over with a generated id: a
+    silently-invented thread would give each call its own state and defeat the
+    purpose.
     """
     builder = StateGraph(EduMapState)
 
@@ -581,6 +621,10 @@ def create_graph() -> StateGraph:
     builder.add_edge("assessment", END)
     builder.add_edge("assess_degraded", END)
 
+    checkpointer = _graph_ctx.checkpointer
+    if checkpointer is not None:
+        logger.info("Compiling orchestrator graph with a durable checkpointer")
+        return builder.compile(checkpointer=checkpointer)
     return builder.compile()
 
 

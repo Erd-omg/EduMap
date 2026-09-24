@@ -405,24 +405,45 @@ async def _run_generation(session_id: str, request: Request) -> None:
 
         async def _graph_runner() -> dict | None:
             last: dict | None = None
-            # Use stream_mode="updates" so step keys are actual node names
-            async for step in graph.astream(state, stream_mode="updates"):
+            # Invocation contract differs between the two graph kinds:
+            #
+            #   * checkpointed → a thread_id is REQUIRED; LangGraph persists
+            #     each super-step under that thread, which is what lets
+            #     progress survive a restart.
+            #   * ephemeral → must be invoked WITHOUT a config at all. Passing
+            #     `config=None` explicitly is not equivalent to omitting it —
+            #     it broke invocation in testing — so kwargs are built
+            #     conditionally instead of always passing the parameter.
+            from src.agents.orchestrator.checkpointing import thread_config
+            from src.agents.orchestrator.graph import graph_has_checkpointer
+
+            # ``stream_mode="updates"`` yields per-node deltas, which is what
+            # both the SSE events and the live progress snapshot need (step
+            # keys are real node names).
+            #
+            # NOTE on the reducer replay below. It is tempting to replace it
+            # with ``stream_mode=["updates", "values"]`` and take the assembled
+            # state LangGraph hands back. That was tried and **it hangs** the
+            # invocation (verified: adding "values" made the API test suite
+            # stall, while the single mode completes in ~10s). So the deltas are
+            # folded here instead.
+            #
+            # That folding is NOT a duplicate of the graph's logic:
+            # ``_STATE_REDUCERS`` is *derived from* EduMapState's ``Annotated``
+            # metadata (see state.py), so it is the same source of truth the
+            # graph uses. What must not be reintroduced is a hand-written merge
+            # — a previous last-write-wins version was correct only while the
+            # generation branches were sequential, and silently dropped one
+            # parallel branch's resources once each branch returned only its
+            # own delta.
+            stream_kwargs: dict = {"stream_mode": "updates"}
+            if graph_has_checkpointer():
+                stream_kwargs["config"] = thread_config(session_id)
+
+            async for step in graph.astream(state, **stream_kwargs):
                 if step is None:
                     continue
                 last = step
-                # Write every step's update back to the session state so
-                # the GET /status endpoint returns live agent progress
-                # instead of always showing the initial "running" state.
-                #
-                # This must apply the SAME reducers the graph uses, or the
-                # live snapshot diverges from the graph's real state.  A
-                # hand-rolled last-write-wins merge was correct only while the
-                # generation branches were sequential: designer_node used to
-                # return the whole accumulated list, so whichever branch wrote
-                # last carried both.  Once the branches run in parallel and
-                # each returns only its own delta, last-write-wins silently
-                # dropped one branch's resources.  Consult the declared
-                # reducers (state.py) instead of duplicating their logic.
                 for node_name, update in step.items():
                     if not isinstance(update, dict):
                         continue
@@ -483,7 +504,13 @@ async def _run_generation(session_id: str, request: Request) -> None:
                 # asyncio.CancelledError (BaseException) passes through this
                 # handler and the TimeoutError handler into the outer
                 # CancelledError handler untouched.
-                final_state = await graph.ainvoke(state)
+                # Same conditional-kwargs rule as the astream path above.
+                from src.agents.orchestrator.checkpointing import thread_config as _tc
+                from src.agents.orchestrator.graph import graph_has_checkpointer as _has_ck
+                if _has_ck():
+                    final_state = await graph.ainvoke(state, config=_tc(session_id))
+                else:
+                    final_state = await graph.ainvoke(state)
         except TimeoutError:
             logger.error("Generation %s timed out after 600s — failing session", session_id)
             state["overall_status"] = "failed"

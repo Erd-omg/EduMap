@@ -7,6 +7,12 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "langchain>=0.3.0",
     "langgraph>=0.2.0",
+    # Durable graph state. The `postgres` extra brings psycopg; the `[binary]`
+    # variant bundles libpq so no system PostgreSQL client library is required
+    # (the project otherwise uses asyncpg, which is pure-Python on the wire and
+    # needs nothing installed).
+    "langgraph-checkpoint-postgres>=3.0.0",
+    "psycopg[binary]>=3.2.0",
     "neo4j>=5.20.0",
     "chromadb>=0.5.20,<0.6.0",
     "sentence-transformers>=3.0.0",
