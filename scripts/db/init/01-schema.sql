@@ -36,15 +36,36 @@ CREATE TABLE IF NOT EXISTS learning_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Quiz results
-CREATE TABLE IF NOT EXISTS quiz_results (
+-- Forgetting-curve review log — append-only history of every scored review.
+--
+-- Why this exists: ``forgetting_curve_state`` keeps only the *latest* fitted
+-- parameters per (user, kp), and ``learning_progress`` is an upsert that
+-- overwrites.  Neither retains the (time, score) series that any spaced-
+-- repetition model needs in order to be fitted or evaluated — which is why
+-- the forgetting curve could not be validated against real data.  This table
+-- is that missing series.
+--
+-- Notes on the shape:
+--   * ``user_id`` is VARCHAR with no FK, matching ``forgetting_curve_state``
+--     and ``episodic_memory``.  Anonymous/demo users do not exist in ``users``
+--     and an FK here would reject their reviews.
+--   * Append-only: rows are never updated or deleted (except by the privacy
+--     deletion path).  A review that happened stays in the history.
+--   * ``score`` is normalised to [0, 1] — it is fed straight into the
+--     forgetting-curve update, so storing raw per-quiz maxima would require
+--     the reader to re-normalise and risk inconsistency.
+CREATE TABLE IF NOT EXISTS forgetting_review_log (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    knowledge_point_id VARCHAR(255) NOT NULL,
-    score DECIMAL(5,2) NOT NULL,
-    max_score DECIMAL(5,2) NOT NULL,
-    answers JSONB NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    user_id VARCHAR(255) NOT NULL,
+    kp_id VARCHAR(255) NOT NULL,
+    score FLOAT NOT NULL,             -- normalised [0, 1]
+    -- 'learn' | 'review' | 'quiz' — distinguishes first exposure from a
+    -- later review, which spaced-repetition models weight differently.
+    event_type VARCHAR(32) NOT NULL DEFAULT 'review',
+    -- 'assessment' | 'path' | 'mentor' — which subsystem produced the review.
+    source VARCHAR(32) NOT NULL DEFAULT 'assessment',
+    reviewed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 -- Learning path snapshots
@@ -60,8 +81,12 @@ CREATE TABLE IF NOT EXISTS learning_paths (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id);
 CREATE INDEX IF NOT EXISTS idx_learning_logs_user_id ON learning_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_learning_logs_created_at ON learning_logs(created_at);
-CREATE INDEX IF NOT EXISTS idx_quiz_results_user_id ON quiz_results(user_id);
-CREATE INDEX IF NOT EXISTS idx_quiz_results_kp_id ON quiz_results(knowledge_point_id);
+-- The evaluation/fitting query is "one user's reviews for one kp, in time
+-- order", so the composite index is ordered to serve that scan directly.
+CREATE INDEX IF NOT EXISTS idx_review_log_user_kp_time
+    ON forgetting_review_log(user_id, kp_id, reviewed_at);
+CREATE INDEX IF NOT EXISTS idx_review_log_reviewed_at
+    ON forgetting_review_log(reviewed_at);
 CREATE INDEX IF NOT EXISTS idx_learning_paths_user_id ON learning_paths(user_id);
 CREATE INDEX IF NOT EXISTS idx_learning_paths_active ON learning_paths(active);
 CREATE INDEX IF NOT EXISTS idx_learning_paths_user_active ON learning_paths(user_id, active);
