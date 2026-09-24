@@ -54,6 +54,21 @@ class Settings(BaseSettings):
     #    属于「未启用重排」的基线，**不可归因于重排收益**。
     #    重排 vs 基线的对照实验尚未执行；复现方式见
     #    scripts/run_rag_benchmark.py 的 --reranker 开关。
+    # ── Cross-Encoder Reranker ──────────────────────────────────────────────
+    # 默认关闭，且**实测证明必须保持关闭**（2026-09-25，n=200，缓存绕过）：
+    #
+    #   reranker=off : MRR 0.8945 / NDCG@1 0.8600 / P50 24.5ms
+    #   reranker=on  : MRR 0.3250 / NDCG@1 0.2250 / P50 63.6ms   ← 崩了一半以上
+    #   ΔMRR −0.5695，延迟 ×2.60
+    #
+    # 原因与 NVIDIA 的评测一致（arXiv 2409.07691）：**过小的 cross-encoder 会主动
+    # 伤害检索**。当前默认模型 ms-marco-MiniLM-L-6-v2 只有 ~22M 参数，比该研究
+    # 中已被证明有害的 33M MiniLM-L-12 还小。
+    #
+    # **若将来要启用，必须先换更大的模型再测**（如 BAAI/bge-reranker-v2-m3，568M，
+    # 该研究中相对基线 +3.7~5 NDCG@10），不能只改开关。
+    #
+    # 复现：python scripts/run_reranker_ablation.py --dataset expanded
     reranker_enabled: bool = False
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     reranker_top_k: int = 5
@@ -63,12 +78,21 @@ class Settings(BaseSettings):
     # Neo4j 关键字检索给出离散匹配质量（exact / prefix / substring / token-overlap），
     # 二者量纲不一致——直接拼接按 score 排序会让一边压另一边。
     #
-    # 三种融合策略（默认 "rrf"）：
-    #   - "score"  : 按各自原始 score 排序去重（保留各源最大值）；保持旧行为。
+    # 三种融合策略：
+    #   - "score"  : 按各自原始 score 排序去重（保留各源最大值）。
     #   - "minmax" : 各自在源内 min-max 归一化到 [0, 1] 后再排序；适合各源量纲差很大。
     #   - "rrf"    : Reciprocal Rank Fusion，score(d) = Σ 1/(k + rank)，只依赖顺序；
-    #                不需要 score 校准，对单源故障最稳健（k=60 经典默认）。
-    hybrid_fusion_method: str = "rrf"
+    #                不需要 score 校准，对单源故障最稳健（k=60 是 Cormack 2009 的
+    #                惯例值，原文自述"该选择并不关键"）。
+    #
+    # 默认值依据 **本仓 n=200 实测**（scripts/run_fusion_ablation.py，缓存绕过）：
+    #   score  MRR 0.9002 / P@1 0.8600 / P50 18.6ms   ← 最优
+    #   rrf    MRR 0.8569 / P@1 0.7700 / P50 22.1ms
+    #   minmax MRR 0.8499 / P@1 0.7600 / P50 18.6ms
+    # 即 score 相对 rrf 的 MRR 高 0.043（相对 +5%）、P@1 高 0.09，且延迟不劣。
+    # 与 Bruch et al.（arXiv 2210.11934, ACM TOIS）"调优的加权分数融合优于 RRF"
+    # 的结论一致。复现：python scripts/run_fusion_ablation.py --dataset expanded
+    hybrid_fusion_method: str = "score"
     hybrid_rrf_k: int = 60
 
     # ── Query Expansion ─────────────────────────────────────────────────────

@@ -56,6 +56,17 @@ TEST_TARGETS = [
     "tests/test_tools/",
     "tests/test_utils/",
     "tests/test_rag/test_chunking.py",
+    "tests/test_memory/test_recall_scoring.py",
+    "tests/test_memory/test_episodic_embedding.py",
+    "tests/test_agents/test_irt.py",
+    "tests/test_agents/test_grading.py",
+    "tests/test_agents/test_assessment_agent.py",
+    "tests/test_agents/test_checkpointing.py",
+    "tests/test_agents/test_retention.py",
+    "tests/test_learning_path/test_forgetting_eval.py",
+    "tests/test_learning_path/test_forgetting_curve.py",
+    "tests/test_learning_path/test_review_log.py",
+    "tests/test_resources/",
 ]
 
 # Default mutation targets: the modules where a silent logic error reaches
@@ -69,6 +80,16 @@ DEFAULT_TARGETS = [
     "src/utils/llm_adapter.py",
     "src/main.py",
     "src/rag/chunking/semantic_chunker.py",
+    "src/memory/recall_scoring.py",
+    "src/agents/assessment/irt.py",
+    "src/agents/assessment/grading.py",
+    "src/learning_path/forgetting_eval.py",
+    "src/learning_path/forgetting_curve.py",
+    "src/utils/db_pool.py",
+    "src/agents/assessment/agent.py",
+    "src/resources/provenance.py",
+    "src/agents/orchestrator/checkpointing.py",
+    "src/agents/orchestrator/retention.py",
 ]
 
 
@@ -242,6 +263,226 @@ MUTATIONS: dict[str, list[Mutation]] = {
             "tool: exceptions propagate instead of degrading",
             r'            return ToolResult\(success=False, error=str\(exc\)\)\n\n    def build_prompt_block',
             '            raise\n\n    def build_prompt_block',
+        ),
+    ],
+    "src/memory/recall_scoring.py": [
+        Mutation(
+            "recency: decay constant changed away from the paper value",
+            r"RECENCY_DECAY = 0\.995",
+            "RECENCY_DECAY = 0.9",
+        ),
+        Mutation(
+            "score: importance term dropped",
+            r"        score = WEIGHT_RECENCY \* recency \+ WEIGHT_IMPORTANCE \* importance",
+            "        score = WEIGHT_RECENCY * recency",
+        ),
+        Mutation(
+            "score: relevance term dropped",
+            r"            score \+= WEIGHT_RELEVANCE \* relevance",
+            "            pass",
+        ),
+        Mutation(
+            "recency: undateable entries treated as ancient",
+            r"    if created_at is None:\n        return 0\.0",
+            "    if created_at is None:\n        return float('inf')",
+        ),
+        Mutation(
+            "cosine: negative similarity not clamped",
+            r"    return max\(0\.0, min\(1\.0, sim\)\)",
+            "    return sim",
+        ),
+        Mutation(
+            "ranking: ascending instead of descending",
+            r"    scored\.sort\(key=lambda pair: pair\[1\], reverse=True\)",
+            "    scored.sort(key=lambda pair: pair[1])",
+        ),
+        Mutation(
+            "cosine: missing vector scores 1.0 instead of 0.0",
+            r"    if not a or not b:\n        return 0\.0",
+            "    if not a or not b:\n        return 1.0",
+        ),
+    ],
+    "src/agents/assessment/irt.py": [
+        Mutation(
+            "ability: prior term dropped (MLE instead of MAP)",
+            r"        return _log_likelihood\(responses, theta\) - \(\n            prior_weight \* \(theta - prior\) \*\* 2 / 2\.0\n        \)",
+            "        return _log_likelihood(responses, theta)",
+        ),
+        Mutation(
+            "mastery: not monotone in ability",
+            r"    return _sigmoid\(ability\)\n\n\ndef _log_likelihood",
+            "    return 1.0 - _sigmoid(ability)\n\n\ndef _log_likelihood",
+        ),
+        Mutation(
+            "probability: discrimination sign flipped",
+            r"    return _sigmoid\(discrimination \* \(ability - difficulty\)\)",
+            "    return _sigmoid(discrimination * (difficulty - ability))",
+        ),
+    ],
+    "src/agents/assessment/grading.py": [
+        Mutation(
+            "grade: blank answer treated as correct",
+            r"    submitted = _normalise\(answer\)\n    if not submitted:\n        return False",
+            "    submitted = _normalise(answer)\n    if not submitted:\n        return True",
+        ),
+        Mutation(
+            "difficulty: 1-5 mapping reversed",
+            r"    return \(value - midpoint\) / \(midpoint - _DIFFICULTY_MIN\) \* \(_DIFFICULTY_LOGIT_SPAN / 2\)",
+            "    return -(value - midpoint) / (midpoint - _DIFFICULTY_MIN) * (_DIFFICULTY_LOGIT_SPAN / 2)",
+        ),
+        Mutation(
+            "delta: sign flipped",
+            r"    delta = graded\.mastery - baseline",
+            "    delta = baseline - graded.mastery",
+        ),
+    ],
+    "src/learning_path/forgetting_eval.py": [
+        Mutation(
+            "auc: ties counted as all-positive",
+            r"    u = pos_rank_sum - n_pos \* \(n_pos \+ 1\) / 2",
+            "    u = pos_rank_sum",
+        ),
+        Mutation(
+            "rmse: observed rate forced to prediction (zero error)",
+            r"        total \+= \(mean_pred - observed\) \*\* 2",
+            "        total += 0.0",
+        ),
+        Mutation(
+            "recalled: threshold inverted",
+            r"                        recalled=score >= 0\.6,",
+            "                        recalled=score < 0.6,",
+        ),
+    ],
+    "src/learning_path/forgetting_curve.py": [
+        Mutation(
+            "curve: exponential instead of power law",
+            r"    return \(1\.0 \+ FACTOR \* elapsed_hours / stability\) \*\* \(-DECAY\)",
+            "    return math.exp(-elapsed_hours / stability)",
+        ),
+        Mutation(
+            "curve: growth exponent dropped (no spacing effect)",
+            r"    growth = \(\(prior_count \+ 1\) / 2\.0\) \*\* GROWTH_EXP",
+            "    growth = 1.0",
+        ),
+        Mutation(
+            "curve: score factor normalisation removed",
+            r"    score_factor = \(max\(posterior_mean, MIN_POSTERIOR\) / NEUTRAL_POSTERIOR\) \*\* SCORE_EXP",
+            "    score_factor = posterior_mean ** SCORE_EXP",
+        ),
+        Mutation(
+            "curve: stability clamp removed",
+            r"    return max\(S_MIN, min\(S_MAX, raw\)\)",
+            "    return raw",
+        ),
+        Mutation(
+            "curve: zero elapsed no longer short-circuits to certainty",
+            r"    if elapsed_hours <= 0:\n        return 1\.0\n    if stability <= 0:",
+            "    if elapsed_hours <= 0:\n        return 0.0\n    if stability <= 0:",
+        ),
+        Mutation(
+            "curve: zero stability no longer returns zero recall",
+            r"    if stability <= 0:\n        return 0\.0",
+            "    if stability <= -1.0:\n        return 0.0",
+        ),
+    ],
+    "src/agents/orchestrator/retention.py": [
+        Mutation(
+            "retention: undatable thread treated as stale (destructive guess)",
+            r"        if last_activity is None:\n            # Either the thread vanished or its timestamp is unreadable. Both\n            # mean \"cannot date it\" → keep.\n            return False",
+            "        if last_activity is None:\n            return True",
+        ),
+        Mutation(
+            "retention: stale threads never deleted",
+            r"    for tid in stale:\n        if await delete_thread\(saver, tid\):\n            report.threads_deleted \+= 1",
+            "    for tid in stale:\n        if False:\n            report.threads_deleted += 1",
+        ),
+        Mutation(
+            "retention: stale-set argument replaces discovery",
+            r"        stale = \[tid for tid in thread_ids if tid in precomputed\]",
+            "        stale = list(precomputed)",
+        ),
+        Mutation(
+            "retention: quoted JSON timestamp not unquoted",
+            r"""    cleaned = raw\.strip\(\)\.strip\('\"'\)""",
+            "    cleaned = raw.strip()",
+        ),
+        Mutation(
+            "retention: naive timestamp left unlocalised",
+            r"        parsed = parsed\.replace\(tzinfo=timezone\.utc\)",
+            "        pass",
+        ),
+    ],
+    "src/agents/orchestrator/checkpointing.py": [
+        Mutation(
+            "checkpoint: 255-char guard removed",
+            r'    if len\(session_id\) > 255:\n        raise ValueError\(\n            f"thread_id must be < 255 chars',
+            '    if False:\n        raise ValueError(\n            f"thread_id must be < 255 chars',
+        ),
+        Mutation(
+            "checkpoint: DSN scheme not stripped",
+            r'    if dsn\.startswith\("postgresql\+asyncpg://"\):\n        return dsn\.replace\("postgresql\+asyncpg://", "postgresql://", 1\)',
+            '    if False:\n        return dsn.replace("postgresql+asyncpg://", "postgresql://", 1)',
+        ),
+        Mutation(
+            "checkpoint: tables never created",
+            r"                await self\._saver\.setup\(\)",
+            "                pass",
+        ),
+        Mutation(
+            "checkpoint: pool not opened explicitly",
+            r"            await self\._pool\.open\(wait=True, timeout=10\)",
+            "            pass",
+        ),
+        Mutation(
+            "checkpoint: autocommit dropped (langgraph requires it)",
+            r'                kwargs=\{"autocommit": True, "prepare_threshold": 0\},',
+            '                kwargs={"autocommit": False, "prepare_threshold": 0},',
+        ),
+    ],
+    "src/resources/provenance.py": [
+        Mutation(
+            "provenance: unlocated chunk given offset 0 instead of None",
+            r"            spans\.append\(ChunkSpan\(text=chunk, char_start=None, char_end=None, index=index\)\)\n            continue\n\n        end = start \+ len\(stripped\)",
+            "            spans.append(ChunkSpan(text=chunk, char_start=0, char_end=0, index=index))\n            continue\n\n        end = start + len(stripped)",
+        ),
+        Mutation(
+            "provenance: whitespace-tolerant search disabled",
+            r"    match = re\.compile\(pattern\)\.search\(haystack, start\)\n    return match\.start\(\) if match else -1",
+            "    return -1",
+        ),
+        Mutation(
+            "provenance: cursor never advances (overlaps re-found)",
+            r"        cursor = end",
+            "        cursor = 0",
+        ),
+        Mutation(
+            "provenance: forward search replaced by global search",
+            r"        start = _search_from\(source, stripped, cursor\)",
+            "        start = _search_from(source, stripped, 0)",
+        ),
+    ],
+    "src/utils/db_pool.py": [
+        Mutation(
+            "pool: wrapper no longer unwrapped",
+            r"    inner = getattr\(db_pool, \"pool\", None\)\n    if inner is not None and hasattr\(inner, \"acquire\"\):\n        logger\.debug\(\n            \"%s: unwrapped a pool wrapper \(%s\) to its \.pool\",\n            owner,\n            type\(db_pool\)\.__name__,\n        \)\n        return inner",
+            "    return db_pool",
+        ),
+        Mutation(
+            "pool: unusable argument silently accepted",
+            r'    raise TypeError\(\n        f"\{owner\}: db_pool must expose acquire\(\)',
+            '    return None\n    raise TypeError(\n        f"{owner}: db_pool must expose acquire()',
+        ),
+    ],
+    "src/agents/assessment/agent.py": [
+        Mutation(
+            "mastery: LLM self-report allowed through again",
+            r'                if data\.get\("estimated_mastery_delta"\):\n                    logger\.debug\(',
+            '                if data.get("estimated_mastery_delta"):\n                    mastery_delta.update(data["estimated_mastery_delta"])\n                    logger.debug(',
+        ),
+        Mutation(
+            "questions: difficulty dropped",
+            r"                            difficulty=knowledge_unit\.difficulty,",
+            "                            difficulty=None,",
         ),
     ],
 }

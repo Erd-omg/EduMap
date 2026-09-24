@@ -14,6 +14,20 @@ CREATE TABLE IF NOT EXISTS episodic_memory (
     importance_score FLOAT DEFAULT 0.5,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Embedding of the interaction text, used by LongTermMemory.recall_relevant
+-- to rank history by semantic relevance to the current query (the
+-- recency+importance+relevance formula in src/memory/recall_scoring.py).
+-- Stored as a JSONB array of floats rather than pgvector: the embedding is
+-- produced by the in-process sentence-transformers model, and scoring happens
+-- in Python over a small candidate window, so a vector index would add an
+-- extension dependency without buying anything at this scale.
+-- NULL for rows written before this column existed — recall_relevant treats a
+-- missing embedding as relevance 0, so those rows can still be recalled.
+-- `IF NOT EXISTS` keeps this file idempotent for databases created earlier.
+ALTER TABLE episodic_memory
+    ADD COLUMN IF NOT EXISTS embedding JSONB;
+
 CREATE INDEX IF NOT EXISTS idx_episodic_user_created
     ON episodic_memory(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_episodic_user_type
