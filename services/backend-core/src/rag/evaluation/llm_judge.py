@@ -100,10 +100,19 @@ async def llm_faithfulness(
             "supported_sentences": result.supported_sentences,
             "unsupported_sentences": result.unsupported_sentences,
             "reasoning": result.reasoning,
+            "used_judge": True,
         }
     except Exception as exc:
         logger.warning("LLM faithfulness judge failed, falling back: %s", exc)
-        # Fallback: use token-overlap heuristic
+        # Fallback: token-overlap heuristic.
+        #
+        # `used_judge: False` is the important part. The fallback keeps the
+        # function total (callers get a number rather than an exception), but a
+        # heuristic result must not be *reported* as an LLM-judge result: the
+        # two are independent methods, and conflating them destroys the
+        # cross-validation they exist for — if both "legs" are the same
+        # heuristic, a disagreement (the signal that something is wrong) can
+        # never appear.
         from src.rag.evaluation.metrics import faithfulness
 
         fallback = faithfulness(answer, [context])
@@ -112,6 +121,7 @@ async def llm_faithfulness(
             "supported_sentences": [],
             "unsupported_sentences": fallback["unsupported"],
             "reasoning": "fallback_heuristic",
+            "used_judge": False,
         }
 
 

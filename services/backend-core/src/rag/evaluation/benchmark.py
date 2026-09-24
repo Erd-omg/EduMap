@@ -48,6 +48,7 @@ class RAGEvalBenchmark:
         course_id: str | None = None,
         use_sample_queries: bool = False,
         llm: BaseLLMAdapter | None = None,
+        answers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Run a full benchmark.
 
@@ -55,8 +56,11 @@ class RAGEvalBenchmark:
             n_queries: Number of test queries to generate (from KG or dataset).
             course_id: Optional course to scope the benchmark.
             use_sample_queries: If True, load queries from ``datasets/sample_queries.json``
-                instead of auto-generating from KG names.
             llm: Optional LLM adapter for LLM-as-judge evaluations.
+            answers: Optional ``{query: generated_answer}`` mapping. The judge
+                scores these. Without it no judge score is produced — see the
+                note at the judge call site for why a placeholder answer must
+                never be scored.
 
         Returns:
             Dict with benchmark results and metadata.
@@ -99,35 +103,66 @@ class RAGEvalBenchmark:
             ) if hits else 0.0
 
         # 4. LLM-as-judge faithfulness evaluation (default for Chinese datasets)
+        #
+        # NOTE: this used to pass a placeholder string as the "answer"
+        # (``f"（关于{query}的模拟回答）"``), which the judge then scored. That
+        # measured nothing: a placeholder has no overlap with the retrieved
+        # context, so the score reflected the placeholder's wording rather than
+        # any generation quality. A judge run is now only performed when a real
+        # answer is available; otherwise the metric is left absent, which is
+        # honest, instead of present-and-meaningless.
         llm_faithfulness_score = None
-        if llm is not None and test_queries:
+        provided = answers or {}
+        scoreable = [
+            q for q in (test_queries or []) if provided.get(q.get("query", ""))
+        ] if llm is not None else []
+        if scoreable:
             try:
                 from src.rag.evaluation.llm_judge import llm_faithfulness
 
                 scores = []
-                # Check if dataset is Chinese — if so, use LLM judge as primary
+                # Check if dataset is Chinese — so the judge prompt matches.
                 has_chinese = any(
                     '一' <= ch <= '鿿'
-                    for q in test_queries[:5]
+                    for q in scoreable[:5]
                     for ch in (q.get("query", "") or "")
                 )
-                for q_data in test_queries[:3]:  # limit to 3 to avoid high cost
+                for q_data in scoreable[:3]:  # limit to 3 to avoid high cost
                     query = q_data["query"]
+                    # Assemble the context this answer was actually generated
+                    # against, so the judge sees the same grounding the
+                    # generator did.
                     results = await self._rag.search(query, top_k=3)
                     context = await self._rag.assemble_context(results)
-                    if context.sources:
-                        judge_result = await llm_faithfulness(
-                            answer=f"（关于{query}的模拟回答）",
-                            context=context.context_str,
-                            llm=llm,
+                    if not context.sources:
+                        continue
+                    judge_result = await llm_faithfulness(
+                        answer=provided[query],
+                        context=context.context_str,
+                        llm=llm,
+                    )
+                    # Only a genuine judge verdict counts. On failure the helper
+                    # silently falls back to the token-overlap heuristic; taking
+                    # that value here would report a heuristic number under the
+                    # LLM-judge label, and the two independent measurements
+                    # would stop being independent.
+                    if not judge_result.get("used_judge", False):
+                        logger.warning(
+                            "Judge fell back to heuristic for query '%s' — "
+                            "not counting it as an LLM-judge result",
+                            query[:30],
                         )
-                        scores.append(judge_result.get("faithfulness_score", 0))
+                        continue
+                    scores.append(judge_result.get("faithfulness_score", 0))
                 if scores:
                     llm_faithfulness_score = round(
                         sum(scores) / len(scores), 4
                     )
                 if has_chinese:
-                    logger.info("LLM-as-judge faithfulness used (Chinese dataset): %s", llm_faithfulness_score)
+                    logger.info(
+                        "LLM-as-judge faithfulness used (Chinese dataset): %s",
+                        llm_faithfulness_score,
+                    )
             except Exception as exc:
                 logger.warning("LLM faithfulness evaluation failed: %s", exc)
 

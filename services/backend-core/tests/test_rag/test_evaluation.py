@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.rag.evaluation.benchmark import RAGEvalBenchmark
+from src.rag.evaluation.datasets import load_sample_queries
 from src.rag.evaluation.evaluator import EvalResult, RAGEvaluator
 from src.rag.evaluation.llm_judge import llm_answer_relevancy, llm_faithfulness
 from src.rag.models import RAGResult
@@ -326,7 +327,7 @@ class TestRAGEvalBenchmark:
         assert result["status"] == "skipped"
 
     async def test_benchmark_llm_faithfulness(self) -> None:
-        """LLM faithfulness evaluation runs when llm is provided."""
+        """The judge scores caller-supplied answers."""
         mock_rag = AsyncMock()
         mock_rag.search.return_value = [
             RAGResult(content="内容", source_type="chroma", source_id="kp-1", source_name="知识", score=0.9),
@@ -351,17 +352,93 @@ class TestRAGEvalBenchmark:
             kp_repo=MagicMock(),
         )
 
+        # Answers must be supplied explicitly: the benchmark cannot invent one,
+        # and scoring a placeholder is what previously produced meaningless
+        # numbers.
+        sample = load_sample_queries()[:2]
+        answers = {q["query"]: "这是真实的生成答案" for q in sample}
+
         result = await benchmark.run_benchmark(
             n_queries=2,
             use_sample_queries=True,
             llm=mock_llm,
+            answers=answers,
         )
 
         assert "llm_faithfulness" in result["metrics"]
         assert result["metrics"]["llm_faithfulness"] > 0
 
+    async def test_no_answers_means_no_judge_score(self) -> None:
+        """Without real answers the metric is absent, not fabricated.
+
+        Previously a placeholder string was scored, so the reported number
+        reflected the placeholder's wording rather than any generation quality.
+        Absent is the honest result.
+        """
+        mock_rag = AsyncMock()
+        mock_rag.search.return_value = []
+        mock_rag.assemble_context = AsyncMock(
+            return_value=MagicMock(context_str="ctx", sources=[])
+        )
+        mock_llm = MagicMock()
+        mock_llm.generate_structured = AsyncMock()
+
+        benchmark = RAGEvalBenchmark(rag_service=mock_rag, kp_repo=MagicMock())
+        result = await benchmark.run_benchmark(
+            n_queries=2, use_sample_queries=True, llm=mock_llm,
+        )
+
+        assert "llm_faithfulness" not in result["metrics"], (
+            "no answers were provided, so no faithfulness score may be claimed"
+        )
+
+    async def test_llm_is_never_asked_to_score_a_placeholder(self) -> None:
+        """Regression guard: the judge must not receive a stub answer.
+
+        The old code passed ``f"（关于{query}的模拟回答）"`` as the answer. Any
+        occurrence of that pattern reaching the judge means the metric is again
+        measuring nothing.
+        """
+        mock_rag = AsyncMock()
+        mock_rag.search.return_value = [
+            RAGResult(content="doc", source_type="chroma", source_id="kp-1", source_name="A", score=0.9),
+        ]
+        mock_rag.assemble_context = AsyncMock(
+            return_value=MagicMock(
+                context_str="ctx",
+                sources=[RAGResult(content="doc", source_type="chroma", source_id="kp-1", source_name="A", score=0.9)],
+            )
+        )
+        mock_llm = MagicMock()
+        mock_llm.generate_structured = AsyncMock(
+            return_value=MagicMock(
+                faithfulness_score=0.9, supported_sentences=[], unsupported_sentences=[], reasoning=""
+            )
+        )
+
+        benchmark = RAGEvalBenchmark(rag_service=mock_rag, kp_repo=MagicMock())
+        sample = load_sample_queries()[:2]
+        await benchmark.run_benchmark(
+            n_queries=2,
+            use_sample_queries=True,
+            llm=mock_llm,
+            answers={q["query"]: "答案文本" for q in sample},
+        )
+
+        from src.rag.evaluation.llm_judge import llm_faithfulness as judge_fn
+
+        seen_answers = [
+            c.kwargs.get("answer")
+            for c in mock_llm.generate_structured.call_args_list
+            if c.kwargs
+        ]
+        for ans in seen_answers:
+            assert ans is None or "模拟回答" not in str(ans), (
+                f"judge received a placeholder answer: {ans!r}"
+            )
+
     async def test_benchmark_llm_faithfulness_failure(self) -> None:
-        """LLM faithfulness failure doesn't crash the benchmark (falls back to heuristic)."""
+        """A judge failure must not crash the run — nor fabricate a score."""
         mock_rag = AsyncMock()
         mock_rag.search.return_value = [
             RAGResult(content="doc", source_type="chroma", source_id="kp-1", source_name="A", score=0.9),
@@ -380,15 +457,19 @@ class TestRAGEvalBenchmark:
             kp_repo=MagicMock(),
         )
 
+        sample = load_sample_queries()[:1]
         result = await benchmark.run_benchmark(
             n_queries=1,
             use_sample_queries=True,
             llm=mock_llm,
+            answers={q["query"]: "答案文本" for q in sample},
         )
 
         assert result["status"] == "completed"
-        # Fallback heuristic runs, so llm_faithfulness IS present
-        assert "llm_faithfulness" in result.get("metrics", {})
+        # The judge failed, so no judge score may be reported. The previous
+        # assertion required the key to be present, which meant a fallback
+        # number was being surfaced as if it were a judge result.
+        assert "llm_faithfulness" not in result.get("metrics", {})
 
 
 # ── LLM Judge ─────────────────────────────────────────────────────
