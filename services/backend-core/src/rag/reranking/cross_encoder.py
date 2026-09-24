@@ -7,6 +7,7 @@ more accurate relevance scores than embedding cosine similarity alone.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from src.rag.models import RAGResult
@@ -100,20 +101,93 @@ class CrossEncoderReranker:
             logger.warning("Cross-encoder scoring failed: %s", exc)
             return results[:top_k]
 
-        # Attach scores and re-sort
+        # Attach scores and re-sort.
+        #
+        # NOTE: ``predict`` returns a numpy array, so each element is a
+        # ``numpy.float32`` — NOT a Python ``float``. The previous version
+        # branched on ``isinstance(score, (int, float))`` / ``isinstance(score,
+        # (list, tuple))``, and a numpy scalar satisfies *neither*, so no branch
+        # ran and **the reranker's scores were silently discarded**: it computed
+        # for every query (doubling latency) while the ranking never changed.
+        #
+        # The scores themselves are sound (a relevant doc scored 7.83 against
+        # 1.81 for an irrelevant one in a direct check) — they were simply
+        # thrown away. Converting through ``float()`` accepts numpy scalars and
+        # Python numbers alike.
+        #
+        # **Scale matters too.** Cross-encoder output is an unbounded logit,
+        # while every other producer of ``RAGResult.score`` in this codebase
+        # yields a [0,1] number — fusion scores (~0.016) and cosine similarity
+        # alike. The frontend renders ``score`` as a percentage
+        # (``Math.round(score * 100)`` plus a bar width of ``score * 100``), so
+        # a raw logit shows up as "783%" and overflows its container. Ranking
+        # uses the raw logit (monotone, so order is identical) and the stored
+        # value is squashed through a logistic so downstream consumers keep the
+        # [0,1] contract they were written against.
+        scored: list[tuple[float, int]] = []
         for i, score in enumerate(scores):
-            # Cross-encoders often output logits — sigmoid to [0,1] range
-            if isinstance(score, (int, float)):
-                results[i].score = float(score)
-            elif isinstance(score, (list, tuple)) and len(score) > 0:
-                # Some models return [neg_score, pos_score] — use positive class
-                results[i].score = float(score[1]) if len(score) > 1 else float(score[0])
+            value = self._extract_score(score)
+            if value is not None:
+                scored.append((value, i))
 
-        # Sort by new score descending
-        reranked = sorted(results, key=lambda r: r.score, reverse=True)
+        if not scored:
+            # Nothing usable — keep the incoming order rather than returning
+            # an arbitrary one.
+            logger.warning("Cross-encoder produced no usable scores; keeping input order")
+            return results[:top_k]
+
+        # Rank on the raw logit (order-preserving), then write normalised values.
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        ranked_results: list[RAGResult] = []
+        for value, idx in scored:
+            result = results[idx]
+            result.score = self._to_unit_score(value)
+            ranked_results.append(result)
 
         logger.debug(
-            "Reranked %d results -> top %d (top score: %.4f)",
-            len(results), top_k, reranked[0].score if reranked else 0,
+            "Reranked %d results -> top %d (top logit: %.4f)",
+            len(results), top_k, scored[0][0] if scored else 0,
         )
-        return reranked[:top_k]
+        return ranked_results[:top_k]
+
+    @staticmethod
+    def _to_unit_score(logit: float) -> float:
+        """Squash a cross-encoder logit into [0, 1] via the logistic function.
+
+        Every other score producer in this codebase (RRF/score fusion, cosine
+        similarity) already yields [0,1], and the frontend renders scores as
+        percentages. Returning a raw logit would display as "783%" and overflow
+        the progress bar, so the stored value is normalised while ranking uses
+        the raw value (the logistic is monotone, so order is unaffected).
+
+        Note these values are *not* calibrated probabilities — a sigmoid of a
+        relevance logit is a monotone rescaling, not a likelihood. They are
+        suitable for display and ordering, not for thresholding decisions.
+        """
+        # Clamp the exponent to avoid OverflowError on extreme logits.
+        if logit >= 0:
+            z = math.exp(-min(logit, 60.0))
+            return 1.0 / (1.0 + z)
+        z = math.exp(max(logit, -60.0))
+        return z / (1.0 + z)
+
+    @staticmethod
+    def _extract_score(score: Any) -> float | None:
+        """Normalise one model output into a float, or None if unusable.
+
+        Handles the shapes a cross-encoder may emit:
+          * a numpy or Python scalar (``float()`` accepts both);
+          * a 2-element sequence ``[neg, pos]`` — the positive class is taken;
+          * a 1-element sequence.
+        Returns None when the value cannot be interpreted, so the caller skips
+        it rather than writing a nonsense score.
+        """
+        try:
+            if hasattr(score, "__len__") and not isinstance(score, (str, bytes)):
+                seq = list(score)
+                if not seq:
+                    return None
+                score = seq[1] if len(seq) > 1 else seq[0]
+            return float(score)
+        except (TypeError, ValueError):
+            return None
