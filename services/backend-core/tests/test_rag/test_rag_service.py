@@ -150,8 +150,17 @@ class TestNeo4jKeywordScore:
 class TestMergeAndRankRRF:
     """Reciprocal Rank Fusion 跨源融合。"""
 
-    def test_default_method_is_rrf(self) -> None:
-        assert RAGRetrievalService.default_fusion_method == "rrf"
+    def test_default_method_is_score(self) -> None:
+        """默认融合策略由 n=200 实测决定，不是随手选的。
+
+        scripts/run_fusion_ablation.py --dataset expanded（缓存绕过）:
+            score  MRR 0.9002 / P@1 0.86   ← 当前默认
+            rrf    MRR 0.8569 / P@1 0.77
+            minmax MRR 0.8499 / P@1 0.76
+        与 Bruch et al. (arXiv 2210.11934) 的结论一致：调优的加权分数融合优于 RRF。
+        改动默认值时必须重跑该脚本并更新 src/config.py 的注释。
+        """
+        assert RAGRetrievalService.default_fusion_method == "score"
 
     def test_single_source_preserves_order(self) -> None:
         """单源时 RRF 仅取名次，排序结果与 score 排序一致。"""
@@ -245,14 +254,27 @@ class TestFusionMethodSelectable:
     """method 参数可切换，并随类默认值生效。"""
 
     def test_default_method_inherits_from_class(self) -> None:
-        """未传 method 时使用类默认 (rrf)。"""
+        """未传 method 时使用类默认（当前为 "score"）。
+
+        断言的是"省略 method 的结果 == 显式传 default_fusion_method 的结果"，
+        而不是硬编码某个策略的分数 —— 否则每次改默认值都要重写这个测试，
+        且它无法区分"真正走了默认值"和"碰巧算成一样"。
+        """
         results = [_make_result("k1", "chroma", score=0.5)]
-        merged = RAGRetrievalService._merge_and_rank(results, "test")
-        # 1/(60+1) ≈ 0.01639 —— 与 score=0.5 不同，确认不是 score 法
-        assert merged[0].score == pytest.approx(1 / 61)
+        implicit = RAGRetrievalService._merge_and_rank(results, "test")
+        explicit = RAGRetrievalService._merge_and_rank(
+            results, "test", method=RAGRetrievalService.default_fusion_method
+        )
+        assert [r.source_id for r in implicit] == [r.source_id for r in explicit]
+        # score 法保留原始分；若走了 RRF 会变成 1/61
+        assert implicit[0].score == pytest.approx(0.5)
 
     def test_invalid_method_falls_back_to_rrf(self) -> None:
-        """未知 method 字符串回退到 RRF（不抛错）。"""
+        """未知 method 字符串回退到 RRF（不抛错）。
+
+        回退目标是 **RRF 而非默认的 score**：RRF 只依赖名次、对单源故障最稳健，
+        作为非法输入的兜底比分数融合更安全。
+        """
         results = [_make_result("k1", "chroma", score=0.5)]
         merged = RAGRetrievalService._merge_and_rank(results, "test", method="bogus")
         assert merged[0].score == pytest.approx(1 / 61)
@@ -598,10 +620,10 @@ class TestFusionStrategyViaSearch:
         ids = {r.source_id for r in results}
         assert ids == {"kp-chroma", "kp-neo4j"}, ids
 
-    async def test_default_fusion_is_rrf(self) -> None:
-        """A fresh service defaults to RRF (the documented default)."""
+    async def test_default_fusion_is_score(self) -> None:
+        """A fresh service defaults to the n=200-best strategy ("score")."""
         svc = RAGRetrievalService()
-        assert svc.fusion_method == "rrf"
+        assert svc.fusion_method == "score"
 
     async def test_neo4j_leg_receives_original_query_not_rewritten(self) -> None:
         """The keyword leg must get the user's real words, not a rewrite.
