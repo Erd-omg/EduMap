@@ -19,6 +19,16 @@ export interface MentorSource {
   summary: string;
   /** Resource id for chroma sources — enables opening the original material. */
   resource_id?: string | null;
+  /**
+   * Character span of this chunk within the original document.
+   *
+   * `null`/`undefined` means the span is unknown (chunks indexed before
+   * provenance existed, or a chunk the locator could not place). It must NOT
+   * be treated as 0 — that would highlight the document's first character and
+   * look like working provenance while pointing at the wrong text.
+   */
+  char_start?: number | null;
+  char_end?: number | null;
 }
 
 /** Intent classification emitted by the backend `intent` SSE event. */

@@ -46,6 +46,13 @@ class MentorSource(BaseModel):
     # Optional link back to the original uploaded resource (chroma chunk
     # sources carry resource_id in their metadata; neo4j/KP sources don't).
     resource_id: str | None = None
+    # Character span of this chunk within the original document, so the
+    # frontend can highlight the cited passage rather than just naming the
+    # chunk. Both are None when the span is unknown (older indexed chunks,
+    # or a chunk the locator could not place) — ``None`` is deliberate and
+    # must not be rendered as 0, which would point at the document's start.
+    char_start: int | None = None
+    char_end: int | None = None
 
 
 class MentorResponse(BaseModel):

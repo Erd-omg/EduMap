@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { MentorSource } from '@/stores/chat-store';
+import { CitedPassage } from './cited-passage';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
@@ -20,6 +21,9 @@ interface ChunkPreview {
   index: number;
   text_preview: string;
   char_count: number;
+  /** Span of this chunk in the source document; null when unknown. */
+  char_start?: number | null;
+  char_end?: number | null;
 }
 
 interface SourcePopoverProps {
@@ -49,6 +53,14 @@ export function SourcePopover({ sources }: SourcePopoverProps) {
   const [detail, setDetail] = useState<ResourceDetail | null>(null);
   const [chunks, setChunks] = useState<ChunkPreview[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  /**
+   * The span the user actually clicked on. When set, the modal highlights that
+   * passage instead of just listing the first N chunks — which is the point of
+   * span-level provenance: "show me where this answer came from".
+   */
+  const [focused, setFocused] = useState<{ start: number | null; end: number | null } | null>(
+    null,
+  );
 
   const reposition = useCallback(() => {
     const trigger = triggerRef.current;
@@ -116,6 +128,8 @@ export function SourcePopover({ sources }: SourcePopoverProps) {
     if (!source.resource_id) return;
     setDetail({ id: source.resource_id, name: source.name, type: '' });
     setChunks([]);
+    // Remember the clicked span so the modal can highlight that passage.
+    setFocused({ start: source.char_start ?? null, end: source.char_end ?? null });
     setDetailLoading(true);
     try {
       const [metaRes, chunkRes] = await Promise.all([
@@ -146,9 +160,28 @@ export function SourcePopover({ sources }: SourcePopoverProps) {
   const closeDetail = useCallback(() => {
     setDetail(null);
     setChunks([]);
+    setFocused(null);
   }, []);
 
   if (!sources.length) return null;
+
+  /**
+   * Whether the clicked span actually landed inside one of the listed chunks.
+   *
+   * Computed up front because the header text depends on it: claiming "已定位
+   * 到被引用的段落" when the span matched nothing would be a lie the user can
+   * see through (no highlight appears).
+   */
+  const hasCitedChunk =
+    focused?.start != null &&
+    focused?.end != null &&
+    chunks.some(
+      (c) =>
+        c.char_start != null &&
+        c.char_end != null &&
+        focused.start! >= c.char_start &&
+        focused.start! < c.char_end,
+    );
 
   const panel = isOpen && position
     ? createPortal(
@@ -263,6 +296,98 @@ export function SourcePopover({ sources }: SourcePopoverProps) {
                 <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand border-t-transparent mr-2" />
                 加载内容...
               </div>
+            ) : chunks.length > 0 && (focused?.start != null || !detail.description) ? (
+              // Chunks take priority when a span was clicked: an uploaded
+              // resource's `description` is a summary and does not contain the
+              // cited passage, so showing it would hide the highlight the user
+              // just asked for. With no span to show, a description is still
+              // the more useful thing to display for generated resources.
+              <div className="space-y-3">
+                <p className="text-xs text-text-secondary">
+                  {hasCitedChunk
+                    ? `共 ${chunks.length} 段，已定位到被引用的段落（黄色高亮）`
+                    : `共 ${chunks.length} 个文本段落（每段预览前 200 字符）`}
+                </p>
+                {chunks.map((chunk, i) => {
+                  // Which chunk contains the clicked offset? Chunk spans are
+                  // absolute to the document, so containment is a range check.
+                  const isCited =
+                    focused?.start != null &&
+                    focused?.end != null &&
+                    chunk.char_start != null &&
+                    chunk.char_end != null &&
+                    focused.start >= chunk.char_start &&
+                    focused.start < chunk.char_end;
+
+                  // Translate the absolute span into a chunk-relative one.
+                  //
+                  // The preview is only the chunk's FIRST 200 characters
+                  // (`text_preview = chunk[:200]` in the parser), while the
+                  // offsets are absolute to the document. So a cited passage
+                  // sitting past character 200 of its chunk simply is not in
+                  // this string — and clamping the offset into range (which an
+                  // earlier version did) would highlight the *tail of the
+                  // preview* instead, i.e. text the user never asked about.
+                  //
+                  // Highlighting nothing is the honest outcome there: a wrong
+                  // highlight looks like working provenance while pointing at
+                  // the wrong passage, which is worse than an absent one.
+                  const relStart = isCited
+                    ? (focused!.start as number) - (chunk.char_start as number)
+                    : null;
+                  const relEnd = isCited
+                    ? (focused!.end as number) - (chunk.char_start as number)
+                    : null;
+                  const citedInsidePreview =
+                    relStart != null &&
+                    relEnd != null &&
+                    relStart < chunk.text_preview.length &&
+                    relEnd > 0;
+
+                  return (
+                    <div
+                      key={i}
+                      data-testid={isCited ? 'cited-chunk' : undefined}
+                      className={`rounded-lg border p-3 ${
+                        isCited
+                          ? 'border-brand bg-brand/5'
+                          : 'border-border bg-bg-secondary'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-text-secondary">
+                          段落 #{chunk.index + 1}
+                          {isCited && <span className="ml-1 text-brand">· 引用位置</span>}
+                        </span>
+                        <span className="text-[10px] text-text-light">
+                          {chunk.char_count} 字符
+                        </span>
+                      </div>
+                      <p className="text-xs text-text-primary whitespace-pre-wrap leading-relaxed">
+                        {citedInsidePreview ? (
+                          <CitedPassage
+                            text={chunk.text_preview}
+                            charStart={relStart}
+                            charEnd={relEnd}
+                          />
+                        ) : (
+                          // Either not the cited chunk, or the cited passage lies
+                          // past the 200-char preview. Rendering the preview
+                          // unhighlighted is correct: the passage is genuinely
+                          // not in this string.
+                          chunk.text_preview
+                        )}
+                        {chunk.char_count > 200 && '...'}
+                      </p>
+                      {isCited && !citedInsidePreview && (
+                        <p className="mt-1 text-[10px] text-text-light">
+                          被引用的片段位于该段第 {relStart} 字符之后，超出此处 200 字预览范围
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             ) : detail.description ? (
               <div className="rounded-lg border border-border bg-bg-secondary p-3 text-xs text-text-primary whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto">
                 {detail.description}
@@ -275,8 +400,12 @@ export function SourcePopover({ sources }: SourcePopoverProps) {
                 {chunks.map((chunk, i) => (
                   <div key={i} className="rounded-lg border border-border bg-bg-secondary p-3">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium text-text-secondary">段落 #{i + 1}</span>
-                      <span className="text-[10px] text-text-light">{chunk.char_count} 字符</span>
+                      <span className="text-xs font-medium text-text-secondary">
+                        段落 #{chunk.index + 1}
+                      </span>
+                      <span className="text-[10px] text-text-light">
+                        {chunk.char_count} 字符
+                      </span>
                     </div>
                     <p className="text-xs text-text-primary whitespace-pre-wrap leading-relaxed">
                       {chunk.text_preview}

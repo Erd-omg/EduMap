@@ -30,6 +30,11 @@ class ChunkPreview(BaseModel):
     index: int
     text_preview: str
     char_count: int
+    # Character span of this chunk in the source document, so the UI can
+    # highlight the cited passage. ``None`` means "unknown" and must not be
+    # rendered as 0 — that would highlight the document's first character.
+    char_start: int | None = None
+    char_end: int | None = None
 
 
 class ChunksResponse(BaseModel):

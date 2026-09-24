@@ -88,7 +88,16 @@ class DocumentParser:
         if not chunks:
             return {"chunks": 0, "chars": len(text), "error": "Chunking produced no output"}
 
-        # 3. Embed and index (if VectorIndex available)
+        # 2.5 Locate chunks in the source text.
+        #
+        # Done once and reused for both the vector-store metadata (below, in
+        # _embed_and_index) and the chunk previews returned here — computing it
+        # twice would be wasteful and could drift.
+        from src.resources.provenance import locate_chunks
+
+        spans = locate_chunks(text, chunks)
+
+        # Embed and index (if VectorIndex available)
         indexed = 0
         if vector_index is not None:
             try:
@@ -99,6 +108,7 @@ class DocumentParser:
                     vector_index=vector_index,
                     kp_id=kp_id,
                     kp_name=kp_name,
+                    spans=spans,
                 )
             except Exception as exc:
                 logger.exception("Embedding/indexing failed for %s", resource_name)
@@ -114,8 +124,18 @@ class DocumentParser:
             "chars": len(text),
             "indexed": indexed,
             "error": None,
+            # Character offsets travel with the previews so the UI can highlight
+            # the cited passage rather than only naming the chunk. None (not 0)
+            # when a chunk could not be located — 0 would point at the start of
+            # the document and silently highlight the wrong text.
             "in_memory_chunks": [
-                {"index": i, "text": chunk[:200], "char_count": len(chunk)}
+                {
+                    "index": i,
+                    "text": chunk[:200],
+                    "char_count": len(chunk),
+                    "char_start": spans[i].char_start if i < len(spans) else None,
+                    "char_end": spans[i].char_end if i < len(spans) else None,
+                }
                 for i, chunk in enumerate(chunks)
             ] if chunks else [],
         }
@@ -276,8 +296,14 @@ class DocumentParser:
         vector_index: VectorIndex,
         kp_id: str | None = None,
         kp_name: str | None = None,
+        spans: list | None = None,
     ) -> int:
-        """Embed chunks and upsert into ChromaDB."""
+        """Embed chunks and upsert into ChromaDB.
+
+        ``spans`` are the located character offsets for each chunk (from
+        ``locate_chunks``); when omitted the span fields are simply absent from
+        the metadata rather than wrong.
+        """
         collection = self._get_or_create_resource_collection(vector_index)
         if collection is None:
             # ChromaDB unavailable (in-memory fallback) — store in VectorIndex's
@@ -294,7 +320,12 @@ class DocumentParser:
         embeddings = self._model.encode(chunks, show_progress_bar=False)
         embeddings_list = [emb.tolist() for emb in embeddings]
 
-        # Prepare metadata and IDs
+        # Prepare metadata and IDs.
+        #
+        # Character offsets come in as ``spans`` (recovered by locate_chunks in
+        # the caller) so that provenance works for every chunking strategy
+        # without touching their splitting logic — see
+        # src/resources/provenance.py for why.
         ids: list[str] = []
         metadatas: list[dict] = []
         for i, chunk_text in enumerate(chunks):
@@ -307,6 +338,13 @@ class DocumentParser:
                 "source": "user_upload",
                 "text_preview": chunk_text[:200],
             }
+            # Span within the source document. None (not 0) when the chunk could
+            # not be located, so a missing span is distinguishable from "starts
+            # at the beginning" — defaulting to 0 would silently point every
+            # such citation at the document's first character.
+            if spans is not None and i < len(spans):
+                meta["char_start"] = spans[i].char_start
+                meta["char_end"] = spans[i].char_end
             if kp_id:
                 meta["kp_id"] = kp_id
             if kp_name:
@@ -317,7 +355,11 @@ class DocumentParser:
         batch_size = 100
         total_upserted = 0
         for batch_start in range(0, len(ids), batch_size):
-            batch_end = batch_start + batch_size
+            # Clamp the end. Slicing would tolerate an overlong index (Python
+            # truncates), but the *count* below is computed from these bounds —
+            # so an unclamped batch_end reported a full batch_size even for a
+            # partial one. A 19-chunk document was reported as "indexed: 100".
+            batch_end = min(batch_start + batch_size, len(ids))
             collection.upsert(
                 ids=ids[batch_start:batch_end],
                 embeddings=embeddings_list[batch_start:batch_end],
