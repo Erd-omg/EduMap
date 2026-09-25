@@ -92,8 +92,6 @@ def generate_history(
     """
     import math
 
-    import random as _random
-
     history: list[tuple[float, float]] = []
     for i in range(n_reviews):
         if i == 0:

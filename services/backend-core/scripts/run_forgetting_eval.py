@@ -29,6 +29,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import math
@@ -237,12 +238,24 @@ def _verdict(reports: dict[str, ModelReport]) -> list[str]:
     return lines
 
 
-def main() -> int:
+async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--items", type=int, default=300)
     parser.add_argument("--reviews", type=int, default=12)
     parser.add_argument("--seed", type=int, default=20260923)
     parser.add_argument("--output", default="benchmark_results")
+    parser.add_argument(
+        "--source", default="synthetic", choices=["synthetic", "real"],
+        help=(
+            "数据来源：synthetic（默认，自我校验用）或 real —— 后者从 "
+            "forgetting_review_log 读取真实复习历史。**真实数据才是决策依据**；"
+            "合成数据只用于验证评测框架本身。"
+        ),
+    )
+    parser.add_argument(
+        "--user-id", default=None,
+        help="--source real 时限定某个用户（默认取全部用户）",
+    )
     parser.add_argument(
         "--self-check", action="store_true",
         help="只跑框架自检（确认指标能区分好坏模型），不出对比表",
@@ -252,11 +265,25 @@ def main() -> int:
     if args.self_check:
         return self_check()
 
-    dataset = generate_dataset(
-        n_items=args.items, n_reviews=args.reviews, seed=args.seed
-    )
-    n_obs = sum(max(len(h) - 1, 0) for h in dataset)
-    logger.info("合成数据集: %d 条历史 / %d 个观测点", len(dataset), n_obs)
+    if args.source == "real":
+        dataset = await _load_real_dataset(args.user_id)
+        if not dataset:
+            logger.error(
+                "forgetting_review_log 里没有可用的复习历史。\n"
+                "  评测需要的是 (间隔, 成绩) 序列，至少要有个用户在同一知识点上\n"
+                "  复习两次以上。当前为空 —— 先把管道跑起来（真实学习行为），\n"
+                "  再回来拟合参数。\n"
+                "  注意：**不要用合成数据上的最优值去改生产参数**，那是拟合自己的假设。"
+            )
+            return 2
+        n_obs = sum(max(len(h) - 1, 0) for h in dataset)
+        logger.info("真实数据集: %d 条历史 / %d 个观测点", len(dataset), n_obs)
+    else:
+        dataset = generate_dataset(
+            n_items=args.items, n_reviews=args.reviews, seed=args.seed
+        )
+        n_obs = sum(max(len(h) - 1, 0) for h in dataset)
+        logger.info("合成数据集: %d 条历史 / %d 个观测点", len(dataset), n_obs)
 
     reports = {
         name: evaluate_model(name, model, dataset)
@@ -275,7 +302,7 @@ def main() -> int:
     out_path.write_text(
         json.dumps(
             {
-                "kind": "synthetic",
+                "kind": args.source,
                 "n_items": args.items,
                 "n_reviews": args.reviews,
                 "n_observations": n_obs,
@@ -285,6 +312,9 @@ def main() -> int:
                 "warning": (
                     "合成数据仅用于验证评测框架与建立量级参照，"
                     "不能替代真实复习历史上的验证。"
+                ) if args.source == "synthetic" else (
+                    "真实复习历史。仍受样本量限制 —— 记录用户数与观测点数，"
+                    "样本过小时结论不稳。"
                 ),
                 "generated_at": datetime.now(timezone.utc).isoformat(),
             },
@@ -297,5 +327,67 @@ def main() -> int:
     return 0
 
 
+async def _load_real_dataset(user_id: str | None) -> list[list[tuple[float, float]]]:
+    """Read real review histories from forgetting_review_log.
+
+    Returns the same shape the synthetic generator produces, so the evaluation
+    harness is identical for both sources — which is what makes the two
+    comparable at all.
+
+    Requires at least two reviews on a (user, kp) pair: with one review there is
+    no interval to predict from, and ``predict_all`` skips such histories
+    entirely (it would otherwise contribute nothing but still inflate the item
+    count).
+    """
+    from src.config import settings
+    from src.memory.db import MemoryDBPool
+    from src.learning_path.forgetting_curve import ForgettingCurveService
+
+    db = MemoryDBPool(dsn=settings.database_url)
+    await db.create()
+    try:
+        service = ForgettingCurveService(db_pool=db.pool)
+        if user_id:
+            histories = await service.load_review_history(user_id)
+        else:
+            histories = await _load_all_users_history(db.pool)
+
+        return [
+            hist for hist in histories.values()
+            if len(hist) >= 2  # need a measurable interval
+        ]
+    finally:
+        await db.close()
+
+
+async def _load_all_users_history(pool) -> dict[str, list[tuple[float, float]]]:
+    """Every user's histories, keyed by ``{user}::{kp}``.
+
+    ``load_review_history`` is scoped to one user, so the multi-user case reads
+    the log directly and groups by (user_id, kp_id).
+    """
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT user_id, kp_id, score, reviewed_at
+            FROM forgetting_review_log
+            ORDER BY user_id, kp_id, reviewed_at ASC
+            """
+        )
+
+    out: dict[str, list[tuple[float, float]]] = {}
+    previous: dict[tuple[str, str], object] = {}
+    for row in rows:
+        key = (row["user_id"], row["kp_id"])
+        reviewed = row["reviewed_at"]
+        prev = previous.get(key)
+        elapsed = 0.0 if prev is None else (reviewed - prev).total_seconds() / 3600.0
+        previous[key] = reviewed
+        out.setdefault(f"{key[0]}::{key[1]}", []).append(
+            (round(elapsed, 4), float(row["score"]))
+        )
+    return out
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))

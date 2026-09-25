@@ -4,10 +4,13 @@ Mathematical model::
 
     Retrievability  R(t, S) = (1 + FACTOR · t / S) ^ (-DECAY)      (power law)
 
-    Stability       S = S_BASE · posterior_mean^SCORE_EXP · (n + 1)^GROWTH_EXP
+    Stability       S = S_BASE · ((n + 1) / 2)^GROWTH_EXP
+                          · (max(posterior_mean, MIN_POSTERIOR) / NEUTRAL_POSTERIOR)^SCORE_EXP
 
 where ``t`` is hours since the last review, ``S`` is memory stability (hours),
-and ``n`` is the number of prior reviews.
+and ``n`` is the number of prior reviews.  See ``stability_after_review`` for
+why the growth term is halved and the score factor is normalised against a
+neutral posterior rather than used raw.
 
 Why a power law and not ``exp(-t/S)``
 -------------------------------------
@@ -44,7 +47,6 @@ Bayesian update (Beta-Bernoulli)::
 from __future__ import annotations
 
 import logging
-import math
 import time
 from dataclasses import dataclass
 from typing import Any

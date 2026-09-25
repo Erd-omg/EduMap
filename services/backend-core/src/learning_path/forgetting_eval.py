@@ -193,7 +193,6 @@ def predict_all(
     observations: list[ReviewObservations] = []
     for history in histories:
         prior_scores: list[float] = []
-        prev_elapsed = 0.0
         for idx, (elapsed, score) in enumerate(history):
             if idx > 0:
                 mean_prior = (
@@ -212,7 +211,6 @@ def predict_all(
                     )
                 )
             prior_scores.append(score)
-            prev_elapsed = elapsed
     return observations
 
 
