@@ -24,6 +24,8 @@ interface ChunkPreview {
   /** Span of this chunk in the source document; null when unknown. */
   char_start?: number | null;
   char_end?: number | null;
+  /** 1-based page, or null for formats without pages. */
+  page_number?: number | null;
 }
 
 interface SourcePopoverProps {
@@ -358,6 +360,9 @@ export function SourcePopover({ sources }: SourcePopoverProps) {
                         <span className="text-xs font-medium text-text-secondary">
                           段落 #{chunk.index + 1}
                           {isCited && <span className="ml-1 text-brand">· 引用位置</span>}
+                          {isCited && chunk.page_number != null && (
+                            <span className="ml-1 text-brand">第 {chunk.page_number} 页</span>
+                          )}
                         </span>
                         <span className="text-[10px] text-text-light">
                           {chunk.char_count} 字符

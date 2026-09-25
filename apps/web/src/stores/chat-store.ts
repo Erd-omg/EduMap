@@ -29,6 +29,12 @@ export interface MentorSource {
    */
   char_start?: number | null;
   char_end?: number | null;
+  /**
+   * 1-based page of the cited passage, when the source document has pages.
+   * `null`/`undefined` for plain-text sources (no page concept) — must not be
+   * rendered as 1, which would claim the passage came from page 1.
+   */
+  page_number?: number | null;
 }
 
 /** Intent classification emitted by the backend `intent` SSE event. */

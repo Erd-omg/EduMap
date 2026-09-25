@@ -220,6 +220,42 @@ describe('SourcePopover span highlighting', () => {
     })
   })
 
+  it('shows the page number on the cited chunk when known', async () => {
+    const chunks = [
+      {
+        index: 0, text_preview: 'hello world', char_count: 11,
+        char_start: 0, char_end: 11, page_number: 7,
+      },
+    ]
+    vi.stubGlobal('fetch', mockFetch(chunks))
+
+    const source = { ...SOURCE_WITH_SPAN, char_start: 0, char_end: 5, page_number: 7 }
+    render(<SourcePopover sources={[source]} />)
+    await userEvent.click(screen.getByTitle('查看来源'))
+    await userEvent.click(screen.getByText('数组详解'))
+
+    await waitFor(() => {
+      expect(screen.getByText(/第 7 页/)).toBeTruthy()
+    })
+  })
+
+  it('shows no page label for formats without pages', async () => {
+    const chunks = [
+      { index: 0, text_preview: 'hello world', char_count: 11, char_start: 0, char_end: 11 },
+    ]
+    vi.stubGlobal('fetch', mockFetch(chunks))
+
+    const source = { ...SOURCE_WITH_SPAN, char_start: 0, char_end: 5 }
+    render(<SourcePopover sources={[source]} />)
+    await userEvent.click(screen.getByTitle('查看来源'))
+    await userEvent.click(screen.getByText('数组详解'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cited-chunk')).toBeTruthy()
+    })
+    expect(screen.queryByText(/第 \d+ 页/)).toBeNull()
+  })
+
   it('still shows the description when no span was clicked', async () => {
     const chunks: unknown[] = []
     const fetchMock = vi.fn((url: string) => {
