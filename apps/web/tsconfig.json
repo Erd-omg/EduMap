@@ -15,5 +15,5 @@
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"],
-  "references": [{ "path": "../../packages/shared-types" }]
+  "references": [{ "path": "../../packages/shared-types/tsconfig.json" }]
 }
