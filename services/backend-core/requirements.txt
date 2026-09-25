@@ -2,6 +2,15 @@ fastapi[standard]>=0.115.0
 uvicorn[standard]>=0.30.0
 langchain>=0.3.0
 langgraph>=0.2.0
+# Durable graph state (checkpointer). The [binary] psycopg variant bundles
+# libpq so no system PostgreSQL client library is required — the project
+# otherwise uses asyncpg, which needs nothing installed.
+#
+# NOTE: this file and pyproject.toml must be kept in sync. CI and the Dockerfile
+# install from *this* file, so a dependency added only to pyproject.toml is
+# absent at test/build time.
+langgraph-checkpoint-postgres>=3.0.0
+psycopg[binary]>=3.2.0
 neo4j>=5.20.0
 # ChromaDB — pinned to 1.5.x to match server version (chromadb/chroma:1.5.9).
 chromadb>=1.5.0,<1.6.0
