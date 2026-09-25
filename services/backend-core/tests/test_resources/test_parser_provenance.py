@@ -208,7 +208,9 @@ class TestParseResultCarriesSpans:
         doc.write_text("alpha beta gamma delta", encoding="utf-8")
 
         parser = DocumentParser()
-        with _patch.object(parser, "_extract_text", return_value="alpha beta gamma delta"):
+        with _patch.object(
+            parser, "_extract_text", return_value=("alpha beta gamma delta", [])
+        ):
             result = await parser.parse_and_index(
                 file_path=str(doc),
                 resource_id="res1",
@@ -232,7 +234,9 @@ class TestParseResultCarriesSpans:
         """A preview whose chunk cannot be found must report None, not 0."""
         parser = DocumentParser()
         with patch.object(parser, "_chunk_text", return_value=["text not in source"]):
-            with patch.object(parser, "_extract_text", return_value="something else entirely"):
+            with patch.object(
+                    parser, "_extract_text", return_value=("something else entirely", [])
+                ):
                 import tempfile, os
 
                 with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
@@ -332,3 +336,134 @@ class TestMentorSourceSpanPassthrough:
         source = MentorSource(id="s", name="n", char_start=1, char_end=9)
         assert source.char_start == 1
         assert source.char_end == 9
+
+
+class TestPageAttribution:
+    """Chunks carry the page they came from, when the format has pages.
+
+    Page boundaries are captured at extraction time: joining elements into one
+    string (which `_extract_with_unstructured` used to do) discards the only
+    record of where each page began, so the information had to be threaded
+    through rather than recovered later.
+    """
+
+    def test_page_for_offset_basic(self) -> None:
+        from src.resources.provenance import page_for_offset
+
+        # Pages start at 0, 100, 250
+        starts = [0, 100, 250]
+        assert page_for_offset(0, starts) == 1
+        assert page_for_offset(99, starts) == 1
+        assert page_for_offset(100, starts) == 2
+        assert page_for_offset(249, starts) == 2
+        assert page_for_offset(250, starts) == 3
+        assert page_for_offset(9999, starts) == 3
+
+    def test_no_pages_returns_none_not_one(self) -> None:
+        """Plain text has no page concept — 1 would be a fabrication."""
+        from src.resources.provenance import page_for_offset
+
+        assert page_for_offset(500, []) is None
+
+    def test_offset_before_first_boundary_is_page_one(self) -> None:
+        """The first element may carry no page number, so page 1 is the best guess."""
+        from src.resources.provenance import page_for_offset
+
+        assert page_for_offset(5, [100, 200]) == 1
+
+    def test_pages_for_span_uses_the_start(self) -> None:
+        """A chunk straddling a page break belongs to the page it starts on."""
+        from src.resources.provenance import pages_for_span
+
+        starts = [0, 100]
+        assert pages_for_span(90, 150, starts) == 1  # starts on p1
+        assert pages_for_span(100, 150, starts) == 2
+
+    def test_pages_for_span_none_when_unlocated(self) -> None:
+        from src.resources.provenance import pages_for_span
+
+        assert pages_for_span(None, None, [0, 100]) is None
+        assert pages_for_span(50, 80, []) is None
+
+
+class TestExtractionReturnsPageStarts:
+    def test_markdown_has_no_page_starts(self, tmp_path) -> None:
+        """Formats without pages report an empty list, not a fake single page."""
+        doc = tmp_path / "a.md"
+        doc.write_text("hello\n\nworld", encoding="utf-8")
+        parser = DocumentParser()
+        text, starts = parser._extract_text(doc)
+        assert text
+        assert starts == []
+
+    def test_txt_has_no_page_starts(self, tmp_path) -> None:
+        doc = tmp_path / "a.txt"
+        doc.write_text("hello", encoding="utf-8")
+        parser = DocumentParser()
+        _text, starts = parser._extract_text(doc)
+        assert starts == []
+
+
+class TestIndexMetadataCarriesPage:
+    @pytest.mark.asyncio
+    async def test_page_number_written_when_pages_known(self) -> None:
+        from src.resources.provenance import locate_chunks
+
+        parser = _parser_with_stub_model()
+        collection, captured = _capturing_collection()
+
+        # two "pages": chars 0-99 and 100+
+        chunks = ["alpha", "beta"]
+        source = "alpha" + " " * 95 + "beta"  # beta starts at 100
+        with patch.object(parser, "_get_or_create_resource_collection", return_value=collection):
+            await parser._embed_and_index(
+                chunks=chunks,
+                resource_id="res1",
+                resource_name="doc.pdf",
+                vector_index=MagicMock(),
+                spans=locate_chunks(source, chunks),
+                page_starts=[0, 100],
+            )
+
+        metas = captured["metadatas"]
+        assert metas[0]["page_number"] == 1
+        assert metas[1]["page_number"] == 2
+
+    @pytest.mark.asyncio
+    async def test_page_number_absent_when_format_has_no_pages(self) -> None:
+        from src.resources.provenance import locate_chunks
+
+        parser = _parser_with_stub_model()
+        collection, captured = _capturing_collection()
+
+        with patch.object(parser, "_get_or_create_resource_collection", return_value=collection):
+            await parser._embed_and_index(
+                chunks=["alpha"],
+                resource_id="res1",
+                resource_name="doc.md",
+                vector_index=MagicMock(),
+                spans=locate_chunks("alpha", ["alpha"]),
+                page_starts=[],
+            )
+
+        assert "page_number" not in captured["metadatas"][0]
+
+
+class TestMentorSourcePage:
+    def test_page_included_when_present(self) -> None:
+        from src.agents.mentor.agent import _source_span
+
+        got = _source_span({"char_start": 0, "char_end": 10, "page_number": 3})
+        assert got["page_number"] == 3
+
+    def test_page_omitted_when_absent(self) -> None:
+        from src.agents.mentor.agent import _source_span
+
+        assert "page_number" not in _source_span({"char_start": 0, "char_end": 10})
+
+    def test_page_zero_is_rejected(self) -> None:
+        """Pages are 1-based; 0 would render as 'page 0'."""
+        from src.agents.mentor.agent import _source_span
+
+        got = _source_span({"char_start": 0, "char_end": 10, "page_number": 0})
+        assert "page_number" not in got

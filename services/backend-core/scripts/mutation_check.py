@@ -441,9 +441,22 @@ MUTATIONS: dict[str, list[Mutation]] = {
     ],
     "src/resources/provenance.py": [
         Mutation(
+            "pages: no pages yields page 1 instead of None",
+            r'    if not page_starts:\n        return None',
+            '    if not page_starts:\n        return 1',
+        ),
+        Mutation(
+            "pages: span attributed by end instead of start",
+            r"    return page_for_offset\(char_start, page_starts\)",
+            "    return page_for_offset(char_end, page_starts)",
+        ),
+        Mutation(
             "provenance: unlocated chunk given offset 0 instead of None",
-            r"            spans\.append\(ChunkSpan\(text=chunk, char_start=None, char_end=None, index=index\)\)\n            continue\n\n        end = start \+ len\(stripped\)",
-            "            spans.append(ChunkSpan(text=chunk, char_start=0, char_end=0, index=index))\n            continue\n\n        end = start + len(stripped)",
+            # Two sites emit ChunkSpan(None) (empty chunk, and unlocatable
+            # chunk). This targets the unlocatable one, identified by the
+            # `cursor = end` line that follows it.
+            r"            spans\.append\(ChunkSpan\(text=chunk, char_start=None, char_end=None, index=index\)\)\n            continue\n\n        start, end = located",
+            "            spans.append(ChunkSpan(text=chunk, char_start=0, char_end=0, index=index))\n            continue\n\n        start, end = located",
         ),
         Mutation(
             "provenance: whitespace-tolerant search disabled",
@@ -457,8 +470,8 @@ MUTATIONS: dict[str, list[Mutation]] = {
         ),
         Mutation(
             "provenance: forward search replaced by global search",
-            r"        start = _search_from\(source, stripped, cursor\)",
-            "        start = _search_from(source, stripped, 0)",
+            r"        located = _locate_span\(source, stripped, cursor\)",
+            "        located = _locate_span(source, stripped, 0)",
         ),
     ],
     "src/utils/db_pool.py": [

@@ -86,7 +86,11 @@ def _source_span(metadata: dict | None) -> dict:
     if end <= start:
         # An inverted or empty span cannot be highlighted; treat as absent.
         return {}
-    return {"char_start": start, "char_end": end}
+    span = {"char_start": start, "char_end": end}
+    page = _as_offset(metadata.get("page_number"))
+    if page is not None and page >= 1:
+        span["page_number"] = page
+    return span
 
 
 class MentorAgent(BaseAgent):

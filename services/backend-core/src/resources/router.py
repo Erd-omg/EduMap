@@ -270,6 +270,7 @@ async def get_resource_chunks(
                 char_count=c["char_count"],
                 char_start=c.get("char_start"),
                 char_end=c.get("char_end"),
+                page_number=c.get("page_number"),
             )
             for c in memory_chunks[:limit]
         ]
@@ -318,6 +319,7 @@ async def get_resource_chunks(
                     char_count=len(str(text_preview)),
                     char_start=meta_item.get("char_start"),
                     char_end=meta_item.get("char_end"),
+                    page_number=meta_item.get("page_number"),
                 ))
 
         total = len(results.get("ids", [])) if results else 0

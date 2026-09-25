@@ -53,6 +53,8 @@ class MentorSource(BaseModel):
     # must not be rendered as 0, which would point at the document's start.
     char_start: int | None = None
     char_end: int | None = None
+    # 1-based page of the cited passage, when the source document has pages.
+    page_number: int | None = None
 
 
 class MentorResponse(BaseModel):

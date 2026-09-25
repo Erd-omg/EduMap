@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Sequence
 
 
 @dataclass(frozen=True)
@@ -219,3 +220,44 @@ def spans_to_metadata(spans: list[ChunkSpan]) -> list[dict]:
         }
         for span in spans
     ]
+
+
+def page_for_offset(offset: int, page_starts: Sequence[int]) -> int | None:
+    """Which 1-based page a character offset falls on, or None if unknown.
+
+    ``page_starts[i]`` is the character offset at which page ``i + 1`` begins
+    (see ``DocumentParser._extract_with_unstructured``). A page therefore runs
+    from its own start up to the next page's start.
+
+    Returns None when ``page_starts`` is empty — plain-text formats have no
+    page concept, and reporting page 1 for everything would be a fabrication.
+    """
+    if not page_starts:
+        return None
+    if offset < page_starts[0]:
+        # Before the first recorded boundary. The first element may have had no
+        # page number, so attributing to page 1 is the best available answer.
+        return 1
+    page = 1
+    for i, start in enumerate(page_starts):
+        if offset >= start:
+            page = i + 1
+        else:
+            break
+    return page
+
+
+def pages_for_span(
+    char_start: int | None,
+    char_end: int | None,
+    page_starts: Sequence[int],
+) -> int | None:
+    """The page to attribute a chunk to, or None.
+
+    Uses the chunk's **start** offset: a chunk that straddles a page break is
+    attributed to the page it begins on, which matches how a reader would
+    describe "where this passage is".
+    """
+    if char_start is None or not page_starts:
+        return None
+    return page_for_offset(char_start, page_starts)

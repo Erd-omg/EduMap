@@ -67,9 +67,9 @@ class DocumentParser:
         if not path.exists():
             return {"chunks": 0, "chars": 0, "error": f"File not found: {file_path}"}
 
-        # 1. Extract text
+        # 1. Extract text (and, where the format has pages, their boundaries)
         try:
-            text = self._extract_text(path)
+            text, page_starts = self._extract_text(path)
         except Exception as exc:
             logger.exception("Text extraction failed for %s", resource_name)
             return {"chunks": 0, "chars": 0, "error": str(exc)}
@@ -93,7 +93,7 @@ class DocumentParser:
         # Done once and reused for both the vector-store metadata (below, in
         # _embed_and_index) and the chunk previews returned here — computing it
         # twice would be wasteful and could drift.
-        from src.resources.provenance import locate_chunks
+        from src.resources.provenance import locate_chunks, pages_for_span
 
         spans = locate_chunks(text, chunks)
 
@@ -109,6 +109,7 @@ class DocumentParser:
                     kp_id=kp_id,
                     kp_name=kp_name,
                     spans=spans,
+                    page_starts=page_starts,
                 )
             except Exception as exc:
                 logger.exception("Embedding/indexing failed for %s", resource_name)
@@ -135,6 +136,11 @@ class DocumentParser:
                     "char_count": len(chunk),
                     "char_start": spans[i].char_start if i < len(spans) else None,
                     "char_end": spans[i].char_end if i < len(spans) else None,
+                    "page_number": pages_for_span(
+                        spans[i].char_start if i < len(spans) else None,
+                        spans[i].char_end if i < len(spans) else None,
+                        page_starts,
+                    ),
                 }
                 for i, chunk in enumerate(chunks)
             ] if chunks else [],
@@ -146,20 +152,33 @@ class DocumentParser:
         """Extract text from a file based on its extension."""
         ext = path.suffix.lower()
 
+        # Every branch returns (text, page_starts). Only formats that carry a
+        # page concept report boundaries; plain text files return an empty list,
+        # which downstream code treats as "no page attribution available".
         if ext in (".pdf", ".docx", ".pptx"):
             return self._extract_with_unstructured(path)
         elif ext == ".md":
-            return path.read_text(encoding="utf-8", errors="replace")
+            return path.read_text(encoding="utf-8", errors="replace"), []
         elif ext == ".txt":
-            return path.read_text(encoding="utf-8", errors="replace")
+            return path.read_text(encoding="utf-8", errors="replace"), []
         elif ext in (".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".csv", ".json", ".yaml", ".yml"):
-            return self._extract_code(path)
+            return self._extract_code(path), []
         else:
             # Fallback: try plain text
-            return path.read_text(encoding="utf-8", errors="replace")
+            return path.read_text(encoding="utf-8", errors="replace"), []
 
-    def _extract_with_unstructured(self, path: Path) -> str:
-        """Use the ``unstructured`` library to extract text from PDF/DOCX/PPTX."""
+    def _extract_with_unstructured(self, path: Path) -> tuple[str, list[int]]:
+        """Extract text from PDF/DOCX/PPTX, plus where each page starts.
+
+        Returns ``(text, page_starts)`` where ``page_starts[i]`` is the character
+        offset in *text* at which page ``i + 1`` begins. The offsets are what let
+        a chunk be attributed to a page later — joining the elements into one
+        string (as this used to do) discards the only record of that boundary.
+
+        Page attribution is best-effort: DOCX/PPTX and text-layer-less PDFs may
+        report no page numbers per element, in which case ``page_starts`` comes
+        back empty and consumers fall back to character offsets alone.
+        """
         try:
             from unstructured.partition.auto import partition  # type: ignore[import-untyped]
         except ImportError:
@@ -168,10 +187,32 @@ class DocumentParser:
                 "Install with: pip install 'unstructured[pdf,docx,pptx]'",
                 path.name,
             )
-            return path.read_text(encoding="utf-8", errors="replace")
+            return path.read_text(encoding="utf-8", errors="replace"), []
 
         elements = partition(str(path))
-        return "\n\n".join(str(el) for el in elements)
+
+        parts: list[str] = []
+        page_starts: list[int] = []
+        cursor = 0
+        last_page: int | None = None
+
+        for el in elements:
+            page = getattr(el.metadata, "page_number", None) if el.metadata else None
+            # Record where a page begins. Elements are emitted in document
+            # order, so the first element bearing page N marks that page's
+            # start; later elements on the same page do not.
+            if isinstance(page, int) and page != last_page:
+                # Guard against a page number appearing out of order (some
+                # parsers interleave headers/footers): only accept increases.
+                if not page_starts or page > len(page_starts):
+                    page_starts.append(cursor)
+                last_page = page
+
+            text_piece = str(el)
+            parts.append(text_piece)
+            cursor += len(text_piece) + 2  # +2 for the "\n\n" join below
+
+        return "\n\n".join(parts), page_starts
 
     def _extract_code(self, path: Path) -> str:
         """Extract meaningful text from code files — reads as-is but strips excessive blank lines."""
@@ -297,6 +338,7 @@ class DocumentParser:
         kp_id: str | None = None,
         kp_name: str | None = None,
         spans: list | None = None,
+        page_starts: list[int] | None = None,
     ) -> int:
         """Embed chunks and upsert into ChromaDB.
 
@@ -345,6 +387,16 @@ class DocumentParser:
             if spans is not None and i < len(spans):
                 meta["char_start"] = spans[i].char_start
                 meta["char_end"] = spans[i].char_end
+                # Page attribution, derived from the chunk's start offset.
+                # None (not 1) when the format has no page concept — see
+                # provenance.pages_for_span.
+                from src.resources.provenance import pages_for_span
+
+                page = pages_for_span(
+                    spans[i].char_start, spans[i].char_end, page_starts or []
+                )
+                if page is not None:
+                    meta["page_number"] = page
             if kp_id:
                 meta["kp_id"] = kp_id
             if kp_name:
