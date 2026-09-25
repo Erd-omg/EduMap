@@ -164,9 +164,45 @@ async def cancel_generation(session_id: str, request: Request):
     return CancelResponse(session_id=session_id, status="cancelling")
 
 
+async def _state_from_checkpointer(session_id: str) -> dict | None:
+    """Read a session's graph state back from the durable checkpointer.
+
+    Fallback for ``GET /status`` when Redis has no snapshot. The two stores are
+    independent: Redis holds the live progress snapshot the run writes as it
+    goes, while the checkpointer holds LangGraph's own per-super-step state in
+    Postgres. If Redis was flushed, evicted (its TTL is an hour), or the
+    snapshot write failed, the checkpoint is still there — and unlike the Redis
+    copy it is written by LangGraph with the graph's own reducers applied, so it
+    is the more authoritative of the two.
+
+    Returns the state dict, or None when no checkpointer is configured or the
+    thread is unknown. Never raises — a status lookup must not fail the request.
+    """
+    try:
+        from src.agents.orchestrator.graph import graph_has_checkpointer
+
+        if not graph_has_checkpointer():
+            return None
+
+        from src.agents.orchestrator.checkpointing import thread_config
+
+        graph = _get_graph()
+        snapshot = await graph.aget_state(thread_config(session_id))
+        values = getattr(snapshot, "values", None)
+        return dict(values) if values else None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Checkpointer fallback failed for %s: %s", session_id, exc)
+        return None
+
+
 @router.get("/status/{session_id}")
 async def get_status(session_id: str, request: Request):
-    """Return the current state snapshot for a generation session."""
+    """Return the current state snapshot for a generation session.
+
+    Reads Redis first (the live snapshot the run maintains), falling back to
+    the durable checkpointer when Redis has nothing — see
+    :func:`_state_from_checkpointer` for why those are separate stores.
+    """
     # Load from ShortTermMemory (or fallback)
     short_term = _get_short_term(request)
     state_dict = None
@@ -175,6 +211,9 @@ async def get_status(session_id: str, request: Request):
         session_mem = await short_term.get_session(session_id)
         if session_mem:
             state_dict = session_mem.metadata.get("orchestrator_state")
+
+    if not state_dict:
+        state_dict = await _state_from_checkpointer(session_id)
 
     if not state_dict:
         raise HTTPException(status_code=404, detail="Session not found")
