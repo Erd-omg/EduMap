@@ -163,11 +163,13 @@ async def evaluate_arm(
     }
 
 
-def _print_comparison(off: dict, on: dict, k_values: list[int]) -> None:
+def _print_comparison(off: dict, on: dict, k_values: list[int], model_name: str) -> None:
     k1 = k_values[0]
     header = f"{'arm':22} {'MRR':>7} {'NDCG@' + str(k1):>9} {'HR@' + str(k1):>7} {'P50(ms)':>9} {'P95(ms)':>9}"
     print()
-    print(f"Reranker 消融（缓存绕过，模型={settings.reranker_model}）")
+    # Print the model actually under test, not the configured default —
+    # a report naming the wrong model makes its numbers unattributable.
+    print(f"Reranker 消融（缓存绕过，模型={model_name}）")
     print(header)
     print("-" * len(header))
     for arm in (off, on):
@@ -239,7 +241,7 @@ async def main() -> int:
         logger.info("── arm 2/2: reranker 开启 (%s) ──", model_name)
         service._reranker = reranker
         on = await evaluate_arm(
-            service, queries, label=f"reranker=on", top_k=args.top_k, k_values=k_values
+            service, queries, label="reranker=on", top_k=args.top_k, k_values=k_values
         )
     finally:
         if pool is not None:
@@ -248,7 +250,7 @@ async def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("pool close failed: %s", exc)
 
-    _print_comparison(off, on, k_values)
+    _print_comparison(off, on, k_values, model_name)
 
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)

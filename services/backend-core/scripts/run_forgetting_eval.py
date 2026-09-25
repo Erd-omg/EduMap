@@ -60,10 +60,10 @@ logger = logging.getLogger("forgetting_eval")
 # Keeping them decoupled from the production classes means the harness scores
 # the *formula*, and a refactor of the service cannot silently change the
 # benchmark.
-
-S_BASE = 24.0
-S_MIN = 1.0
-S_MAX = 720.0
+#
+# S_BASE / S_MIN / S_MAX are imported from the production module (see the
+# import block above) rather than redefined here, so the legacy comparison
+# below uses the same constants the shipped model does.
 
 
 def edumap_model(elapsed_hours: float, prior_count: int, mean_prior: float) -> float:
