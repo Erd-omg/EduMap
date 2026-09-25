@@ -54,6 +54,11 @@ from src.learning_path.forgetting_synth import generate_dataset  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("forgetting_eval")
 
+# Below this many real observations the fit is noise. Stated explicitly so the
+# decision "is there enough data yet?" has an answer that does not depend on
+# someone's judgement in the moment.
+_MIN_REAL_OBSERVATIONS = 500
+
 # ── Candidate models ─────────────────────────────────────────────────────
 #
 # Each is a plain callable (elapsed_hours, prior_count, mean_prior_score) -> p.
@@ -267,16 +272,31 @@ async def main() -> int:
 
     if args.source == "real":
         dataset = await _load_real_dataset(args.user_id)
+        n_obs = sum(max(len(h) - 1, 0) for h in dataset)
+
         if not dataset:
             logger.error(
                 "forgetting_review_log 里没有可用的复习历史。\n"
-                "  评测需要的是 (间隔, 成绩) 序列，至少要有个用户在同一知识点上\n"
-                "  复习两次以上。当前为空 —— 先把管道跑起来（真实学习行为），\n"
-                "  再回来拟合参数。\n"
-                "  注意：**不要用合成数据上的最优值去改生产参数**，那是拟合自己的假设。"
+                "  评测需要 (间隔, 成绩) 序列：同一用户在同一知识点上至少复习两次，\n"
+                "  且需要至少 %d 个观测点才值得据此调参（当前 0）。\n"
+                "  管道本身是通的 —— 缺的是真实使用产生的数据。\n"
+                "  注意：**不要用合成数据上的最优值去改生产参数**，那是拟合自己的假设。",
+                _MIN_REAL_OBSERVATIONS,
             )
             return 2
-        n_obs = sum(max(len(h) - 1, 0) for h in dataset)
+
+        # Margin gate. Fitting exponents to a handful of observations would
+        # produce a number that looks like a result but is noise; the public
+        # benchmark this project compares against uses ~350M reviews across
+        # 10k users, so a few hundred observations is already a stretch. The
+        # threshold is not a validity claim — it is the point below which the
+        # output should not be acted on at all.
+        if n_obs < _MIN_REAL_OBSERVATIONS:
+            logger.warning(
+                "真实数据 %d 个观测点，低于建议下限 %d —— 结果仅供参考，**不要**据此改"
+                "生产参数（会把噪声当结论）。继续跑只是为了看数据形态。",
+                n_obs, _MIN_REAL_OBSERVATIONS,
+            )
         logger.info("真实数据集: %d 条历史 / %d 个观测点", len(dataset), n_obs)
     else:
         dataset = generate_dataset(
