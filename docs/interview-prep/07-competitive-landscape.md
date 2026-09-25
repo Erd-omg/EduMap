@@ -645,7 +645,20 @@ for i, score in enumerate(scores):
 
 测试：后端 `tests/test_resources/`（33 项）；前端 `cited-passage.test.tsx`（17 项）+ `source-popover-span.test.tsx`（7 项）。**变异验证：前端 2/2 全杀、后端相关变异 2/2 全杀。** 全量：后端 1014 通过，前端 137 通过。
 
-**仍未做**：真实页码（需改 PDF 解析层）；已入库的旧 chunk 没有偏移（需重新解析才能获得）。
+**✅ 真实页码已完成（2026-09-25）**：`_extract_text` 改为返回 `(text, page_starts)` ——
+原先把元素 `"\n\n".join(...)` 成一个字符串，**页码边界在这一步被丢弃**（元素本身带
+`metadata.page_number`）。现在页码贯穿索引元数据 → `/chunks` → `MentorSource` → 前端。
+
+**无页码时返回 `None` 而非 1** —— 纯文本没有页概念，说"第 1 页"是编造；变异测试守住
+（伪造为 1 会杀掉测试）。真实 PDF 端到端验证：3 页文件切 4 块，分别归属 p1/p1/p2/p3，
+跨页的块归起始页。
+
+**⚠️ 该功能的前置条件是在这一步才发现的**：Dockerfile 缺 `tesseract-ocr` 与
+`poppler-utils`（`unstructured[pdf]` 靠它们解析 PDF），所以**PDF 上传在生产环境从未
+成功过** —— 这也是为什么库里的 PDF 上传 parse_stats 全为空。补上后才能实际验证页码；
+在此之前任何页码改动都无法验证，因此也就无从改起。
+
+**仍未做**：已入库的旧 chunk 没有偏移与页码（需重新解析才能获得）。
 
 测试：`tests/test_resources/test_provenance.py`（20 项）+ `test_parser_provenance.py`（11 项）；**变异验证 4/4 全杀**。
 
@@ -663,7 +676,7 @@ for i, score in enumerate(scores):
 | **I-2** | ✅ **已完成**：长时记忆召回加入 `recency + importance + relevance` 打分 | `importance_score` 此前存了不用；`recall_episodic` 已改为打分排序（α=β=γ=1，`0.995^hours`），SQL 扩 5× 候选窗口 | `src/memory/recall_scoring.py` + `long_term.py` 改动；25 项测试，**变异 7/7 全杀** | **✅ 已落地** | 无 |
 | **I-3** | ✅ **已完成**：遗忘曲线两处修复（幂律曲线 + 幂律稳定性增长）| 评测框架 + 数据管道 + 曲线修复。**LogLoss 1.42 → 0.4089**（基线 0.4421，**4/4 种子全胜**）；一周回忆率 0.056 → 0.903；`S_MAX` 从死代码变为可达 | `forgetting_curve.py` + `forgetting_eval.py` + `forgetting_synth.py` + 数据管道；26+24+12 项测试；**变异 6/6 全杀** | **✅ 已落地** | 参数待真实数据重拟合 |
 | **I-4** | ✅ **已完成（含接线）**：掌握度从"LLM 自报"改为"从作答测量"（1PL IRT）| 修掉"出题时断言掌握度、从不评分"的根本缺口；agent 出题时产出空 delta、新增 `grade_attempt()` 从作答测量 | `irt.py` + `grading.py` + agent 接线；22+27+13 项测试；**变异 10/10 全杀** | **✅ 已落地** | 无 |
-| **I-5** | ✅ **已完成**：reranker 实测为负收益，确认保持关闭 | ⚠️ **实测确认开启有害**（n=200，缓存绕过）：**MRR 0.8945 → 0.3250（Δ−0.5695）**、NDCG@1 0.8600 → 0.2250、延迟 ×2.60。与 NVIDIA 一致：过小 cross-encoder 主动伤害检索。**顺带修掉一个让它静默失效的 bug**（见 §4.4.1）| `run_reranker_ablation.py` + 消融脚本 + config 注释记录结论 | **✅ 已落地**<br>（结论是"不要开"）| 换更大模型需重新实测 |
+| **I-5** | ✅ **已完成**：reranker 实测为负收益，确认保持关闭（**两种模型都已测**）| ⚠️ **实测确认开启有害**（n=200，缓存绕过）：<br>· `MiniLM-L-6`(22M)：**MRR 0.8945 → 0.3250（Δ−0.5695）**、延迟 ×2.60<br>· `bge-reranker-v2-m3`(568M)：**MRR 0.8945 → 0.7609（Δ−0.1336）**、延迟 ×15.68<br>**换大模型显著改善（−0.57 → −0.13）但仍为负收益**，验证了 NVIDIA 的"过小模型是主因"，同时说明本项目语料上**任何已测重排都不值得开**。顺带修掉一个让它静默失效的 bug（见 §4.4.1）| `run_reranker_ablation.py` + config 注释记录两种模型的结论 | **✅ 已落地**<br>（结论是"不要开"）| 可试 late-interaction（ColBERT 类）或缩小重排候选集 |
 | **I-5b** | **ColBERT/late-interaction 作为"无需额外 reranker"的路线** | MaxSim 本身即精排，且 CPU 友好。**存储代价常被夸大**：ColBERTv2 残差压缩后 MS MARCO 9M passages 从 154 GiB → **16 GiB(1-bit)/25 GiB(2-bit)**，**与单向量索引（~25 GiB）相当**；PLAID 再提速 **GPU 7× / CPU 45×** | 需重建索引管线；与现有 ChromaDB 架构不同 | **★★☆☆☆** | 依赖检索层重构 |
 | **I-6** | ✅ **已完成**：接入 LangGraph PostgresSaver | 图状态由 LangGraph 自身持久化（每个 super-step 存检查点、应用 reducer），并支持 time-travel；`_STATE_REDUCERS` 手工重建逻辑**双写保留**待验证一致后移除 | `checkpointing.py`（pool 生命周期 + 失败降级）+ `configure_graph(checkpointer=)` + lifespan 接线；15 项测试；**变异 5/5 全杀** | **✅ 已落地** | 依赖 `psycopg[binary]`（自带 libpq）；checkpoint 膨胀清理待做 |
 | **I-7** | ✅ **已完成（前后端）**：字符级偏移溯源 + 点击引用直达原文段落 | 偏移从切分 → ChromaDB → `/chunks` → `MentorSource` → 前端高亮；为 Faithfulness 人工审计打基础 | `provenance.py`（事后定位，不改任何 chunker）+ parser/端点接线 + `cited-passage.tsx` + 弹窗定位；后端 33 + 前端 24 项测试；**变异 4/4 全杀** | **✅ 已落地** | 真实页码需改 PDF 解析层；旧 chunk 需重解析 |
