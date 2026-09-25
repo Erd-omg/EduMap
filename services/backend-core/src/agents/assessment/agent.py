@@ -1,7 +1,7 @@
 """Assessment agent — micro-quiz generation and profile feedback.
 
 Generates 1-3 quiz questions for a knowledge point and computes
-a ``mastery_delta`` estimate based on the user's current profile.
+quiz questions and, on request, grades submitted answers.
 """
 
 from __future__ import annotations
@@ -54,7 +54,6 @@ class AssessmentAgent(BaseAgent):
         )
         # Try LLM generation first; fallback to quiz bank on any error
         questions: list[QuizQuestion] = []
-        mastery_delta: dict[str, float] = {}
         try:
             response = await self._llm.generate(prompt)
             data = self._parse_quiz_json(response.content)
@@ -119,16 +118,15 @@ class AssessmentAgent(BaseAgent):
                 knowledge_unit.id, len(questions),
             )
 
-        # ``mastery_delta`` is intentionally left EMPTY here.
+        # NOTE: no mastery value is produced here, by design.
         #
         # This method only *writes* a quiz; nothing has been answered yet, so
-        # there is no evidence about mastery to report.  The old code filled
-        # this with the LLM's guess, defaulting to a hard-coded 0.1 — a number
-        # that looked like a measurement but was an assertion.  Callers that
-        # have responses should use :meth:`grade_attempt` instead, which
-        # computes the delta from graded answers.
-        #
-        # An empty dict is the honest signal: "not measured yet".
+        # there is no evidence about mastery to report. The old code emitted the
+        # LLM's guess (defaulting to a hard-coded 0.1) into
+        # ``AssessmentOutput.mastery_delta`` — a field **no consumer ever read**,
+        # so the number was both an assertion rather than a measurement *and*
+        # dead weight. Mastery is measured from graded responses by
+        # :meth:`grade_attempt`, which returns it to the caller directly.
 
         # Confidence based on profile depth
         confidence = 0.5
@@ -139,7 +137,6 @@ class AssessmentAgent(BaseAgent):
 
         return AssessmentOutput(
             quiz=questions,
-            mastery_delta=mastery_delta,
             confidence=round(confidence, 2),
         )
 
@@ -171,9 +168,11 @@ class AssessmentAgent(BaseAgent):
                 Without it the delta is measured against the neutral 0.5.
 
         Returns:
-            ``{"graded": GradedQuiz, "mastery_delta": {kp_id: float}}`` —
-            the shape ``AssessmentOutput.mastery_delta`` consumers expect,
-            plus the full grading detail for logging or persistence.
+            ``{"graded": GradedQuiz, "mastery_delta": {kp_id: float}}``.
+            The delta is returned here rather than stored on
+            ``AssessmentOutput`` because the two are produced at different
+            times: the output describes a quiz that has not been answered, while
+            a delta can only exist after grading.
         """
         from src.agents.assessment.grading import (
             grade_quiz,

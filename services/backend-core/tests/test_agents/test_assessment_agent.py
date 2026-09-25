@@ -10,8 +10,9 @@ about it.
 
 Two contracts are pinned here:
 
-1. **Writing a quiz reports no mastery.** At that point nobody has answered, so
-   the honest value is "not measured" — not a plausible-looking number.
+1. **Writing a quiz carries no mastery at all.** At that point nobody has
+   answered, so there is nothing to report. The field that used to hold the
+   LLM's guess (no consumer ever read it) has been removed.
 2. **Grading measures mastery from responses.** The number must move with the
    answers, and a harder question answered correctly must count for more.
 """
@@ -79,28 +80,35 @@ _QUIZ_JSON = json.dumps({
 
 class TestQuizGeneration:
     @pytest.mark.asyncio
-    async def test_writing_a_quiz_reports_no_mastery(self) -> None:
-        """Nothing has been answered, so mastery is 'not measured' — not 0.1."""
+    async def test_writing_a_quiz_carries_no_mastery_field(self) -> None:
+        """Quiz writing must not assert a mastery value at all.
+
+        The old ``AssessmentOutput.mastery_delta`` held the LLM's guess
+        (defaulting to 0.1) and no consumer ever read it. The field is gone;
+        mastery now comes from ``grade_attempt``. Asserting absence is stronger
+        than asserting an empty dict — an empty dict would let the field
+        quietly return.
+        """
         agent = _agent(_QUIZ_JSON)
         unit = KnowledgeUnit(id="kp1", name="加法", description="d", difficulty=2)
 
         out = await agent.run_legacy(unit)
 
         assert len(out.quiz) == 2
-        assert out.mastery_delta == {}, (
-            "quiz writing must not assert a mastery value; the old code "
-            "defaulted to 0.1 which looked like a measurement"
+        assert not hasattr(out, "mastery_delta"), (
+            "quiz writing must not carry a mastery field; mastery is measured "
+            "from graded responses, not asserted before anyone answers"
         )
 
     @pytest.mark.asyncio
-    async def test_llm_supplied_mastery_delta_is_ignored(self) -> None:
-        """The prompt still returns the field; it must not reach the output."""
+    async def test_llm_supplied_mastery_delta_does_not_reach_the_output(self) -> None:
+        """The prompt still returns the field; it must be discarded."""
         agent = _agent(_QUIZ_JSON)
         unit = KnowledgeUnit(id="kp1", name="加法", description="d", difficulty=2)
 
         out = await agent.run_legacy(unit)
 
-        assert "kp1" not in out.mastery_delta
+        assert "mastery_delta" not in out.model_dump()
 
     @pytest.mark.asyncio
     async def test_questions_carry_the_unit_difficulty(self) -> None:
@@ -119,7 +127,7 @@ class TestQuizGeneration:
 
         out = await agent.run_legacy(unit)
 
-        assert out.mastery_delta == {}
+        assert not hasattr(out, "mastery_delta")
         assert out.quiz, "kp-intro exists in the bank, so questions are expected"
 
     @pytest.mark.asyncio

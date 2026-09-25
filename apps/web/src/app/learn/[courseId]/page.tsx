@@ -167,20 +167,51 @@ export default function CoursePage() {
   }, [selectedKpId, selectedKpName, selectedKpDescription, selectedKpDifficulty]);
 
   // Handle quiz submit
-  const handleQuizSubmit = useCallback((answers: Record<string, string>, score: number) => {
+  const handleQuizSubmit = useCallback(async (answers: Record<string, string>, localScore: number) => {
     setQuizAnswers(answers);
-    setQuizScore(score);
-    // Record progress with quiz score
-    if (selectedKpId) {
-      recordProgress(selectedKpId, 'completed', score);
-      // Also record to forgetting curve via learning path review endpoint
-      fetch(`${API_BASE}/api/v1/learning-path/forgetting/review`, {
+
+    if (!selectedKpId) {
+      setQuizScore(localScore);
+      return;
+    }
+
+    // Ask the server to grade. The client's own comparison is kept only as an
+    // immediate fallback: the authoritative score — and the IRT mastery
+    // estimate that drives the learner model — must come from one place, and
+    // that place is the backend. Previously grading existed *only* here, which
+    // meant the mastery model never saw the raw responses it needs (it can
+    // weight a correct answer on a hard item more heavily than on an easy one)
+    // and the score depended on client code.
+    let score = localScore;
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/learning-path/quiz/grade`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: getUserId(), kp_id: selectedKpId }),
-      }).catch(() => {});
+        body: JSON.stringify({
+          questions: quizQuestions,
+          answers,
+          kp_id: selectedKpId,
+        }),
+      });
+      if (res.ok) {
+        const graded = await res.json();
+        // Trust the server's score; it is computed from the same answers the
+        // user submitted, against the same answer keys.
+        score = graded.score;
+      }
+    } catch {
+      // Network failure — fall back to the local score rather than blocking
+      // the learner from seeing their result.
     }
-  }, [selectedKpId, recordProgress]);
+
+    setQuizScore(score);
+    recordProgress(selectedKpId, 'completed', score);
+    fetch(`${API_BASE}/api/v1/learning-path/forgetting/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: getUserId(), kp_id: selectedKpId }),
+    }).catch(() => {});
+  }, [selectedKpId, recordProgress, quizQuestions]);
 
   // Handle continuing after quiz
   const handleQuizContinue = useCallback(() => {

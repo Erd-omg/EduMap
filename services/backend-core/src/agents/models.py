@@ -131,8 +131,15 @@ class QuizQuestion(BaseModel):
 
 
 class AssessmentOutput(BaseModel):
-    """Output from Assessment agent."""
+    """Output from Assessment agent.
+
+    Note the absence of ``mastery_delta``: it used to live here, carrying the
+    LLM's guess at quiz-*writing* time (falling back to a hard-coded 0.1) — a
+    number nothing ever read. Mastery is now measured from graded responses in
+    ``AssessmentAgent.grade_attempt``, which returns it directly to the caller
+    rather than routing it through this model. Keeping a field no consumer
+    reads invites someone to start reading it again.
+    """
 
     quiz: list[QuizQuestion] = []
-    mastery_delta: dict[str, float] = {}  # kp_id -> delta
     confidence: float = 0.5

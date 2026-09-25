@@ -248,6 +248,74 @@ async def generate_quiz(
     }
 
 
+@router.post("/quiz/grade")
+async def grade_quiz_endpoint(
+    body: dict,
+    request: Request,
+):
+    """Grade a quiz attempt and estimate mastery from the observed answers.
+
+    Body::
+
+        {"questions": [<QuizQuestion>, ...],
+         "answers": {"q1": "B", "q2": "C"},
+         "kp_id": "...",              # optional
+         "prior_mastery": 0.5}        # optional
+
+    Returns the deterministic score plus the IRT-based mastery estimate and the
+    signed ``mastery_delta`` the profile update consumes.
+
+    This exists because grading used to happen **only in the browser**
+    (``quiz-result.tsx`` compared answers client-side), while the backend's
+    ``AssessmentAgent.grade_attempt`` sat unused. That left two problems: the
+    authoritative score depended on client code, and the mastery model — which
+    can weight a correct answer on a hard item more heavily than one on an easy
+    item — never saw the raw responses it needs.
+
+    Submitting raw answers lets the server own both. The client may still
+    compute a score for instant feedback, but the value that drives the learner
+    model now comes from here.
+    """
+    from src.agents.assessment.agent import AssessmentAgent
+    from src.agents.models import QuizQuestion
+
+    llm = getattr(request.app.state, "llm_adapter", None)
+    if not llm:
+        raise HTTPException(status_code=503, detail="LLM not available")
+
+    raw_questions = body.get("questions")
+    answers = body.get("answers")
+    if not isinstance(raw_questions, list) or not raw_questions:
+        raise HTTPException(status_code=422, detail="`questions` must be a non-empty list")
+    if not isinstance(answers, dict) or not answers:
+        raise HTTPException(status_code=422, detail="`answers` must be a non-empty mapping")
+
+    try:
+        questions = [QuizQuestion(**q) for q in raw_questions]
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid question payload: {exc}") from exc
+
+    agent = AssessmentAgent(llm_adapter=llm)
+    result = await agent.grade_attempt(
+        questions,
+        answers,
+        knowledge_point_id=body.get("kp_id"),
+        prior_mastery=body.get("prior_mastery"),
+    )
+
+    graded = result["graded"]
+    return {
+        "score": graded.score,
+        "n_correct": graded.n_correct,
+        "n_questions": graded.n_questions,
+        "mastery": graded.mastery,
+        "ability": graded.ability,
+        "standard_error": graded.standard_error,
+        "mastery_delta": result["mastery_delta"],
+        "per_question": graded.per_question,
+    }
+
+
 # ── Forgetting Curve endpoints ────────────────────────────────────────
 
 
