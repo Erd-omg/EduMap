@@ -51,7 +51,7 @@
 
 ## 当前项目状态快照（每轮对话后更新）
 
-> **同步日期：2026-09-25** · 测试基线 **后端 1083 + 前端 141**（不含 E2E）
+> **同步日期：2026-09-26** · 测试基线 **后端 1083 + 前端 141 + E2E 14**（CI 9 个 job 全绿）
 
 | 项 | 现状 |
 |---|---|
@@ -68,13 +68,14 @@
 | **checkpoint 保留** | ✅ 按线程年龄清理（TTL 7 天），`retention.py`；⚠️ 实测发现 `aprune` 未实现、时间戳在 JSONB 的 `ts` 而非 metadata —— **mock 测试对这两点都是瞎的** |
 | **评测** | 9 个指标函数；n=20 / n=200 集；生成侧 **已重测**：词重叠 0.5407 / 语义 0.813 / Relevancy 0.8539（旧记录 0.010/0.277 经查是管线故障，非质量差）|
 | **可观测性** | token 计数 + SSE trace；**无 OpenTelemetry/LangSmith** |
-| **新增工具** | `run_fusion_ablation.py`、`run_forgetting_eval.py`（含 `--self-check`）|
+| **新增工具** | `run_fusion_ablation.py`、`run_forgetting_eval.py`（`--self-check` / `--source real`）、`run_reranker_ablation.py` |
+| **E2E** | ✅ 14 项，**已接入 CI**（此前从未在 CI 跑过 —— 配置坏了很久没人发现）；修复 Playwright 的 tsconfig 引用解析 bug |
 
 **已落地的改进**：**I-1 ~ I-7 全部完成** ✅（I-5 的结论是「不要开启」）
 
 **路线图已全部完成（I-1 ~ I-7）。** 若继续推进，候选：
 1. **换更大的 reranker 模型重测**（需有网环境）—— `bge-reranker-v2-m3` 在该研究中为 +3.7~5 NDCG@10；**换模型才可能有效，改开关已知有害**
-2. **用真实复习数据重拟合遗忘曲线参数**（`forgetting_review_log` 已开始记录）
+2. **用真实复习数据重拟合遗忘曲线参数** —— 管道已验证可用，但**需 ≥500 个观测点**（当前 0，尚无真实使用）；`--source real` 在数据不足时会拒绝出数
 3. **I-7 的真实页码**（需改 PDF 解析层保留页边界）
 
 ## 数据口径说明
