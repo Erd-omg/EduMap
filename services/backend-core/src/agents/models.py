@@ -122,11 +122,24 @@ class QuizQuestion(BaseModel):
     options: list[str] | None = None
     correct_answer: str
     knowledge_point_id: str
+    # Author-assigned difficulty on the 1–5 scale, carried through from the
+    # knowledge unit so that grading can weight a correct answer on a hard
+    # item more heavily than one on an easy item (see
+    # src.agents.assessment.grading.difficulty_to_logit).
+    # Optional: a question without it is treated as average difficulty.
+    difficulty: int | None = None
 
 
 class AssessmentOutput(BaseModel):
-    """Output from Assessment agent."""
+    """Output from Assessment agent.
+
+    Note the absence of ``mastery_delta``: it used to live here, carrying the
+    LLM's guess at quiz-*writing* time (falling back to a hard-coded 0.1) — a
+    number nothing ever read. Mastery is now measured from graded responses in
+    ``AssessmentAgent.grade_attempt``, which returns it directly to the caller
+    rather than routing it through this model. Keeping a field no consumer
+    reads invites someone to start reading it again.
+    """
 
     quiz: list[QuizQuestion] = []
-    mastery_delta: dict[str, float] = {}  # kp_id -> delta
     confidence: float = 0.5

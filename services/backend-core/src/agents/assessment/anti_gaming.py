@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.utils.db_pool import unwrap_pool
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────
@@ -80,7 +82,7 @@ class AntiGamingService:
     def __init__(self, db_pool=None) -> None:
         # {(user_id, kp_id): AntiGamingState}
         self._states: dict[tuple[str, str], AntiGamingState] = {}
-        self._db_pool = db_pool
+        self._db_pool = unwrap_pool(db_pool, owner="AntiGamingService")
         self._loaded_from_db: set[tuple[str, str]] = set()
 
     async def _load_state(self, kp_id: str, user_id: str) -> AntiGamingState | None:

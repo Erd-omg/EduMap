@@ -9,6 +9,15 @@ export interface QuizQuestionData {
   options: string[] | null;
   correct_answer: string;
   knowledge_point_id: string;
+  /**
+   * Author-assigned difficulty on the 1–5 scale, echoed from the backend.
+   *
+   * It must be forwarded when submitting for grading: the server's IRT
+   * estimate weights a correct answer on a hard item more heavily than one on
+   * an easy item, and without this field every question looks average.
+   * Optional because generated content may omit it.
+   */
+  difficulty?: number | null;
 }
 
 interface QuizViewerProps {

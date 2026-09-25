@@ -1,7 +1,7 @@
 """Assessment agent — micro-quiz generation and profile feedback.
 
 Generates 1-3 quiz questions for a knowledge point and computes
-a ``mastery_delta`` estimate based on the user's current profile.
+quiz questions and, on request, grades submitted answers.
 """
 
 from __future__ import annotations
@@ -54,7 +54,6 @@ class AssessmentAgent(BaseAgent):
         )
         # Try LLM generation first; fallback to quiz bank on any error
         questions: list[QuizQuestion] = []
-        mastery_delta: dict[str, float] = {}
         try:
             response = await self._llm.generate(prompt)
             data = self._parse_quiz_json(response.content)
@@ -71,14 +70,30 @@ class AssessmentAgent(BaseAgent):
                             options=q_data.get("options"),
                             correct_answer=q_data.get("correct_answer", ""),
                             knowledge_point_id=knowledge_unit.id,
+                            # Carry the unit's difficulty onto each question so
+                            # grading can weight answers by item hardness.  The
+                            # LLM is not asked for a difficulty: an unvalidated
+                            # self-report would reintroduce the very problem
+                            # this replaces.
+                            difficulty=knowledge_unit.difficulty,
                         )
                     )
 
-                # Start with LLM's estimate
-                llm_delta = data.get("estimated_mastery_delta", {})
-                if isinstance(llm_delta, dict):
-                    for kp_id, delta in llm_delta.items():
-                        mastery_delta[kp_id] = max(0.0, min(1.0, float(delta)))
+                # NOTE: the LLM's ``estimated_mastery_delta`` is deliberately
+                # NOT used.  It was an opinion formed at question-*writing*
+                # time, before anyone answered anything, and it fell back to a
+                # hard-coded 0.1.  Mastery is now measured from the learner's
+                # graded responses — see ``grade_attempt`` below.
+                #
+                # The field is still read so that a deployment whose prompt has
+                # not been updated does not error, but it never reaches the
+                # output.
+                if data.get("estimated_mastery_delta"):
+                    logger.debug(
+                        "Ignoring LLM-supplied estimated_mastery_delta for kp=%s "
+                        "(mastery is measured from graded responses now)",
+                        knowledge_unit.id,
+                    )
         except Exception as exc:
             logger.warning(
                 "LLM quiz generation failed for kp=%s: %s — falling back to quiz bank",
@@ -88,14 +103,30 @@ class AssessmentAgent(BaseAgent):
         if not questions:
             # Fallback to pre-built quiz bank
             questions = get_questions(knowledge_unit.id)
+            # The bank is a static table keyed by kp_id and carries no
+            # difficulty, so stamp the unit's difficulty on before grading —
+            # otherwise every banked question would score as an average item
+            # and the IRT estimate would lose the ability to weight them.
+            questions = [
+                q.model_copy(update={"difficulty": knowledge_unit.difficulty})
+                if q.difficulty is None
+                else q
+                for q in questions
+            ]
             logger.info(
                 "Using quiz bank for kp=%s (%d questions)",
                 knowledge_unit.id, len(questions),
             )
 
-        # If still no questions and no mastery_delta, use sensible default
-        if not mastery_delta:
-            mastery_delta[knowledge_unit.id] = 0.1
+        # NOTE: no mastery value is produced here, by design.
+        #
+        # This method only *writes* a quiz; nothing has been answered yet, so
+        # there is no evidence about mastery to report. The old code emitted the
+        # LLM's guess (defaulting to a hard-coded 0.1) into
+        # ``AssessmentOutput.mastery_delta`` — a field **no consumer ever read**,
+        # so the number was both an assertion rather than a measurement *and*
+        # dead weight. Mastery is measured from graded responses by
+        # :meth:`grade_attempt`, which returns it to the caller directly.
 
         # Confidence based on profile depth
         confidence = 0.5
@@ -106,9 +137,68 @@ class AssessmentAgent(BaseAgent):
 
         return AssessmentOutput(
             quiz=questions,
-            mastery_delta=mastery_delta,
             confidence=round(confidence, 2),
         )
+
+    async def grade_attempt(
+        self,
+        questions: list[QuizQuestion],
+        answers: dict[str, Any] | list[Any],
+        *,
+        knowledge_point_id: str | None = None,
+        prior_mastery: float | None = None,
+    ) -> dict[str, Any]:
+        """Grade a submitted attempt and estimate mastery from the responses.
+
+        This is the counterpart to :meth:`run_legacy` that closes the loop: the
+        agent writes the questions, the learner answers, and *here* the mastery
+        number is computed from what actually happened rather than asserted
+        beforehand.
+
+        Kept deliberately thin — all the statistics live in
+        :mod:`src.agents.assessment.grading`, which is a pure function of
+        (questions, answers) and is tested without a model in the loop.
+
+        Args:
+            questions: the questions that were presented.
+            answers: ``{question_id: answer}`` or positional answers.
+            knowledge_point_id: which KP to key the delta under.  Defaults to
+                the first question's ``knowledge_point_id``.
+            prior_mastery: the learner's mastery before this attempt, if known.
+                Without it the delta is measured against the neutral 0.5.
+
+        Returns:
+            ``{"graded": GradedQuiz, "mastery_delta": {kp_id: float}}``.
+            The delta is returned here rather than stored on
+            ``AssessmentOutput`` because the two are produced at different
+            times: the output describes a quiz that has not been answered, while
+            a delta can only exist after grading.
+        """
+        from src.agents.assessment.grading import (
+            grade_quiz,
+            mastery_delta_from_grading,
+        )
+
+        graded = grade_quiz(questions, answers)
+
+        kp_id = knowledge_point_id
+        if kp_id is None and questions:
+            kp_id = questions[0].knowledge_point_id
+        if kp_id is None:
+            kp_id = "unknown"
+
+        delta = mastery_delta_from_grading(graded, prior_mastery=prior_mastery)
+
+        logger.info(
+            "Graded attempt for kp=%s: %d/%d correct, mastery=%.3f, delta=%+.3f",
+            kp_id, graded.n_correct, graded.n_questions, graded.mastery, delta,
+        )
+
+        return {
+            "graded": graded,
+            "mastery_delta": {kp_id: round(delta, 4)},
+            "score": graded.score,
+        }
 
     # ── Internal helpers ────────────────────────────────────────────────
 

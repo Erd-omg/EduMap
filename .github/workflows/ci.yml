@@ -203,6 +203,28 @@ jobs:
       - name: Run frontend tests
         run: pnpm --filter web test:run
 
+  e2e-tests:
+    # These specs existed but had never run in CI, which is how the config
+    # stayed broken unnoticed: Playwright's tsconfig loader appends ".json" to
+    # every project reference, so a `references` entry pointing at a *directory*
+    # (legal in TypeScript) made every run abort before the first test. Fixed in
+    # apps/web/tsconfig.json; this job keeps it honest.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Playwright browsers
+        run: pnpm --filter web exec playwright install --with-deps chromium
+      - name: Run E2E tests
+        run: pnpm --filter web exec playwright test
+
   dependency-scan:
     runs-on: ubuntu-latest
     steps:

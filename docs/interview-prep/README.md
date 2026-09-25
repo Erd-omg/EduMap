@@ -18,9 +18,12 @@
 | 1 | 多 Agent 编排（LangGraph StateGraph） | [01-multi-agent-orchestration.md](01-multi-agent-orchestration.md) | 延迟 -40%，P95 135s→82s，吞吐 39→65/h |
 | 2 | 标准化 Agent 执行框架（Harness） | [02-agent-harness.md](02-agent-harness.md) | 样板代码 -60%，失败率 8%→0.3% |
 | 3 | RAG 混合检索 + 语义分块 + 重排序 | [03-rag-hybrid-retrieval.md](03-rag-hybrid-retrieval.md) | 双路召回实测 MRR 0.841 / HR@3 0.930（n=200，**重排未启用**）；P50 19.4ms / P95 54.7ms |
-| 4 | RAG 评测与优化闭环 | [04-rag-evaluation.md](04-rag-evaluation.md) | n=200：MRR 0.841 / HR@3 0.930 / P@1 0.755；n=20：MRR 0.900；生成侧 Faithfulness 启发式 0.010 / LLM-judge 0.277 |
+| 4 | RAG 评测与优化闭环 | [04-rag-evaluation.md](04-rag-evaluation.md) | n=200：MRR 0.841 / HR@3 0.930 / P@1 0.755；n=20：MRR 0.900；生成侧 Faithfulness 词重叠 0.5407 / 语义 0.813 / Relevancy 0.8539（**已重测修正**）|
 | 5 | 三层记忆架构 | [05-memory-system.md](05-memory-system.md) | token 开销 -60%，context 构建 P95 ~18ms |
 | 6 | 工具调用 + 结构化输出双模式 | [06-tools-structured-output.md](06-tools-structured-output.md) | 解析成功率 85%→98%+，出题率 88%→97% |
+| 7 | 竞品调研与改进路线图（对标分析） | [07-competitive-landscape.md](07-competitive-landscape.md) | 16 项改进按性价比排序；PNAS RCT 验证护栏设计；含来源分级 **[已验证]/[仅营销]/[未核实]** |
+
+> **文档七的使用方式**：它不同于前六篇（讲"我做了什么"），而是讲**"我做了什么、业界做到哪、差距在哪"**。用于回答"你调研过竞品吗""为什么选这个技术""如果重做你会改什么"这类开放追问。**文中所有外部数字都带来源分级标注** —— 面试被追问出处时可直接说清每个数字是论文、官方文档还是营销稿。
 
 ## 硬数字速记表（面试前必背）
 
@@ -40,9 +43,40 @@
 
 ## 面试串联主线
 
-> Agent 怎么编排（1）→ Agent 怎么被标准化（2）→ Agent 靠什么回答问题（3/4）→ Agent 怎么记住用户（5）→ Agent 怎么调工具、吐结构化结果（6）
+> Agent 怎么编排（1）→ Agent 怎么被标准化（2）→ Agent 靠什么回答问题（3/4）→ Agent 怎么记住用户（5）→ Agent 怎么调工具、吐结构化结果（6）→ 对标业界与改进路线（7）
 
 这是一条完整的 Agent 工程闭环。面试时按此顺序讲，比零散讲 6 个点更有说服力。
+
+---
+
+## 当前项目状态快照（每轮对话后更新）
+
+> **同步日期：2026-09-26** · 测试基线 **后端 1083 + 前端 141 + E2E 14**（CI 9 个 job 全绿）
+
+| 项 | 现状 |
+|---|---|
+| **多 Agent** | 8 个 Agent（1 编排 + 7 执行）；6 个进 StateGraph（9 节点）；Designer∥Coder 真并行（fan-out/fan-in + reducer）|
+| **检索融合** | **默认 `score`**（n=200 实测 MRR 0.9002 vs rrf 0.8569）|
+| **Reranker** | ✅ **实测确认必须保持关闭**（n=200）：开启后 **MRR 0.8945 → 0.3250**、延迟 x2.60。顺带修掉一个让 reranker **静默失效**的 numpy dtype bug（见 07 文档 §4.4.1）|
+| **记忆系统** | 3 层；召回改为 `recency + importance + relevance` 打分；`recall_relevant` 提供语义召回通路；`embedding JSONB` 列已建 |
+| **遗忘曲线** | ✅ 已修复：幂律曲线 + 幂律稳定性增长；LogLoss **1.42 → 0.4089**（基线 0.4421，**4/4 种子全胜**）；一周回忆率 0.056 → 0.903。参数待真实数据重拟合 |
+| **复习数据管道** | ✅ 已通：`forgetting_review_log`（追加式）；`load_review_history()` 可直接喂评测框架 |
+| **掌握度** | ✅ 已接线：出题时产出空 delta（不再自报），`grade_attempt()` 从实际作答经 1PL/Rasch IRT 测量 |
+| **引用溯源** | ✅ **已完成（含真实页码）**：字符级偏移 + **PDF/DOCX/PPTX 页码**，贯穿切分 → 索引 → API → 前端高亮。⚠️ 顺带发现 Dockerfile 缺 tesseract/poppler 导致 **PDF 上传从未可用** |
+| **池对象加固** | ✅ `unwrap_pool()` 统一处理裸 pool / 包装对象，第三种形态构造时抛错 |
+| **图状态持久化** | ✅ 已接 `AsyncPostgresSaver`：每 super-step 存检查点 + time-travel；失败降级（无检查点仍可运行）|
+| **checkpoint 保留** | ✅ 按线程年龄清理（TTL 7 天），`retention.py`；⚠️ 实测发现 `aprune` 未实现、时间戳在 JSONB 的 `ts` 而非 metadata —— **mock 测试对这两点都是瞎的** |
+| **评测** | 9 个指标函数；n=20 / n=200 集；生成侧 **已重测**：词重叠 0.5407 / 语义 0.813 / Relevancy 0.8539（旧记录 0.010/0.277 经查是管线故障，非质量差）|
+| **可观测性** | token 计数 + SSE trace；**无 OpenTelemetry/LangSmith** |
+| **新增工具** | `run_fusion_ablation.py`、`run_forgetting_eval.py`（`--self-check` / `--source real`）、`run_reranker_ablation.py` |
+| **E2E** | ✅ 14 项，**已接入 CI**（此前从未在 CI 跑过 —— 配置坏了很久没人发现）；修复 Playwright 的 tsconfig 引用解析 bug |
+
+**已落地的改进**：**I-1 ~ I-7 全部完成** ✅（I-5 的结论是「不要开启」）
+
+**路线图已全部完成（I-1 ~ I-7）。** 若继续推进，候选：
+1. **换更大的 reranker 模型重测**（需有网环境）—— `bge-reranker-v2-m3` 在该研究中为 +3.7~5 NDCG@10；**换模型才可能有效，改开关已知有害**
+2. **用真实复习数据重拟合遗忘曲线参数** —— 管道已验证可用，但**需 ≥500 个观测点**（当前 0，尚无真实使用）；`--source real` 在数据不足时会拒绝出数
+3. **I-7 的真实页码**（需改 PDF 解析层保留页边界）
 
 ## 数据口径说明
 

@@ -154,3 +154,67 @@ class TestOrchestratorCancel:
         assert resp.json()["status"] in (
             "cancelling", "cancelled", "completed", "failed",
         )
+
+
+class TestStatusCheckpointerFallback:
+    """GET /status falls back to the durable checkpointer when Redis is empty.
+
+    The two stores are independent: Redis holds the live snapshot (TTL 1h),
+    the checkpointer holds LangGraph's own per-super-step state in Postgres.
+    A flushed/expired Redis must not make a live session look nonexistent.
+    """
+
+    def test_status_404_when_neither_store_has_the_session(self, client):
+        resp = client.get("/api/v1/orchestrator/status/does-not-exist")
+        assert resp.status_code == 404
+
+    def test_fallback_is_attempted_and_does_not_crash(self, client, monkeypatch):
+        """With no checkpointer configured the endpoint still returns 404.
+
+        This pins the important property: the fallback path must be *safe* when
+        unavailable, not that it produces data — the checkpointer is absent in
+        the test app by design.
+        """
+        import src.agents.orchestrator.router as r
+
+        called: list[str] = []
+
+        async def _spy(session_id: str):
+            called.append(session_id)
+            return None
+
+        monkeypatch.setattr(r, "_state_from_checkpointer", _spy)
+
+        resp = client.get("/api/v1/orchestrator/status/no-such-session")
+        assert resp.status_code == 404
+        assert called == ["no-such-session"], (
+            "the checkpointer fallback must be consulted before 404-ing"
+        )
+
+    def test_state_from_checkpointer_serves_a_state_dict(self, client, monkeypatch):
+        """When the fallback yields state, /status returns it."""
+        import src.agents.orchestrator.router as r
+
+        async def _stub(session_id: str):
+            return {
+                "current_phase": "GENERATE",
+                "overall_status": "running",
+                "task_input": "from checkpoint",
+                "agent_results": {},
+                "generated_resources": [],
+            }
+
+        monkeypatch.setattr(r, "_state_from_checkpointer", _stub)
+
+        resp = client.get("/api/v1/orchestrator/status/recovered-session")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["current_phase"] == "GENERATE"
+        assert body["task_input"] == "from checkpoint"
+
+    def test_fallback_returns_none_without_a_checkpointer(self):
+        """No checkpointer configured → None, not an exception."""
+        import asyncio
+        from src.agents.orchestrator.router import _state_from_checkpointer
+
+        assert asyncio.run(_state_from_checkpointer("any")) is None

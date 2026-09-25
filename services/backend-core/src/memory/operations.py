@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from src.memory.long_term import LongTermMemory
 from src.memory.models import (
@@ -34,9 +34,34 @@ class MemoryOperations:
         self,
         short_term: ShortTermMemory,
         long_term: LongTermMemory,
+        embed_fn: Callable[[str], list[float]] | None = None,
     ) -> None:
         self.short_term = short_term
         self.long_term = long_term
+        # Optional text→vector encoder. When supplied, newly recorded
+        # interactions are stored with an embedding so that
+        # ``long_term.recall_relevant`` can rank them semantically. When None,
+        # rows are written without a vector and remain recallable on
+        # recency + importance alone.
+        self._embed_fn = embed_fn
+
+    def _embed(self, text: str | None) -> list[float] | None:
+        """Encode *text*, tolerating any encoder failure.
+
+        Embedding is an enhancement, not a correctness requirement: a failure
+        here must not stop the interaction from being recorded. Returns None
+        on any error, which ``recall_relevant`` treats as relevance 0.
+        """
+        if not self._embed_fn or not text or not text.strip():
+            return None
+        try:
+            vector = self._embed_fn(text)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to embed episodic text (non-fatal): %s", exc)
+            return None
+        if not vector:
+            return None
+        return list(vector)
 
     # ── Context building (orchestrator START node) ───────────
 
@@ -123,6 +148,12 @@ class MemoryOperations:
             output=output_text,
             metadata=metadata or {},
             importance_score=importance,
+            # Embed the interaction so recall_relevant can rank semantically.
+            # Encodes input+output together: a question and its answer describe
+            # one topic, and splitting them would fragment that signal.
+            embedding=self._embed(
+                " ".join(t for t in (input_text, output_text) if t)
+            ),
         )
         try:
             await self.long_term.write_episodic(entry)

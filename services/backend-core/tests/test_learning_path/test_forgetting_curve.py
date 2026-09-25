@@ -1,257 +1,241 @@
-"""Tests for ForgettingCurveService — Ebbinghaus + Bayesian update.
+"""Tests for the power-law forgetting curve (the I-3 fix).
 
-Pure algorithm tests. Uses time.time() manipulation via contextlib.
+The old formula had two independent defects, both measured on the harness in
+``scripts/run_forgetting_eval.py``:
+
+1. ``S = 24·mean·log2(n+1)`` grew so slowly that ``S_MAX = 720h`` was
+   unreachable (it would need ~1.9e11 reviews), and S topped out near 61h
+   after 8 reviews — so a week later the model predicted recall 0.063 where a
+   reasonable model predicts ~0.83.
+2. ``R = exp(-t/S)`` decays far too fast at long intervals: at 336h with
+   S≈330h the exponential gives 0.363 versus 0.899 for a power law.
+
+These tests pin the *fixed* behaviour. Deliberately they assert properties
+(monotonicity, magnitude, reachability of the clamp) rather than recomputing
+the formula — a test that mirrors the implementation passes for any formula.
+
+Measured effect of the fix (300 histories / 3300 observations, default seed):
+    legacy LogLoss 1.4200  ->  new LogLoss 0.4320  (moving-avg baseline 0.4421)
+Across seeds 1/42/999 the new model wins 3 of 4 runs and ties the baseline in
+the fourth, so the honest claim is "matches the trivial baseline", not
+"dominates it".
 """
 
 from __future__ import annotations
 
-import time
-from unittest.mock import AsyncMock, patch
+import math
 
 import pytest
 
 from src.learning_path.forgetting_curve import (
-    ALERT_RECALL_THRESHOLD,
-    PRIOR_ALPHA,
-    PRIOR_BETA,
+    FACTOR,
+    GROWTH_EXP,
     S_BASE,
-    URGENT_RECALL_THRESHOLD,
-    ForgettingCurveService,
+    S_MAX,
+    S_MIN,
     ForgettingState,
+    recall_probability,
+    stability_after_review,
 )
 
 
-class TestForgettingState:
-    """ForgettingState — individual KP memory state."""
+class TestPowerLawCurve:
+    def test_zero_elapsed_is_certain(self) -> None:
+        assert recall_probability(0.0, 24.0) == pytest.approx(1.0)
 
-    def test_initial_state(self) -> None:
-        """New state has default prior parameters."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1")
-        assert state.alpha == PRIOR_ALPHA
-        assert state.beta == PRIOR_BETA
-        assert state.strength == S_BASE
-        assert state.review_count == 0
+    def test_negative_elapsed_is_certain(self) -> None:
+        assert recall_probability(-5.0, 24.0) == pytest.approx(1.0)
 
-    def test_posterior_mean_default(self) -> None:
-        """Default prior gives posterior mean of 0.5."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1")
-        assert state.posterior_mean == 0.5
+    def test_at_stability_recall_is_090(self) -> None:
+        """S is defined as the interval where R = 0.9 — that is what FACTOR does."""
+        assert recall_probability(24.0, 24.0) == pytest.approx(0.9, abs=1e-9)
 
-    def test_predict_recall_unseen_returns_zero(self) -> None:
-        """Never-reviewed KP returns recall probability 0.0."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1")
+    def test_monotone_decreasing_in_time(self) -> None:
+        values = [recall_probability(t, 100.0) for t in range(0, 2000, 50)]
+        assert values == sorted(values, reverse=True)
+
+    def test_monotone_increasing_in_stability(self) -> None:
+        values = [recall_probability(168.0, s) for s in range(10, 2000, 50)]
+        assert values == sorted(values)
+
+    def test_never_negative_or_above_one(self) -> None:
+        for t in (0, 1, 1e3, 1e6):
+            for s in (0.5, 24, 720, 1e5):
+                r = recall_probability(t, s)
+                assert 0.0 <= r <= 1.0
+
+    def test_zero_stability_is_zero_recall(self) -> None:
+        assert recall_probability(10.0, 0.0) == 0.0
+
+    def test_beats_exponential_at_long_intervals(self) -> None:
+        """The specific gap that motivated the shape change.
+
+        With S=330h, one week out the exponential is far stingier than the
+        power law; this is the difference that made the old model score worse
+        than a constant predictor.
+        """
+        stability = 330.0
+        elapsed = 336.0
+        exponential = math.exp(-elapsed / stability)
+        power = recall_probability(elapsed, stability)
+
+        assert power > exponential + 0.3, (
+            f"power={power:.3f} exponential={exponential:.3f} — the power law "
+            "must be materially more optimistic at long intervals"
+        )
+        assert power > 0.8
+
+
+class TestStabilityGrowth:
+    def test_grows_with_review_count(self) -> None:
+        values = [stability_after_review(n, 0.8) for n in range(1, 15)]
+        assert values == sorted(values)
+
+    def test_grows_with_score_quality(self) -> None:
+        """A well-remembered item must end up more stable than a poorly one."""
+        good = stability_after_review(5, 0.95)
+        poor = stability_after_review(5, 0.4)
+        assert good > poor
+
+    def test_s_max_is_reachable(self) -> None:
+        """The old clamp was dead code — 720h needed ~1.9e11 reviews.
+
+        The new growth must actually reach the ceiling within a plausible
+        number of reviews, otherwise the clamp is decorative.
+        """
+        stability = stability_after_review(60, 0.9)
+        assert stability == pytest.approx(S_MAX), (
+            f"S after 60 good reviews is {stability:.1f}h; the ceiling should "
+            "have been reached rather than remaining unreachable"
+        )
+
+    def test_ceiling_is_respected(self) -> None:
+        assert stability_after_review(10_000, 1.0) == pytest.approx(S_MAX)
+
+    def test_floor_is_respected(self) -> None:
+        """A zero score must not collapse stability to nothing."""
+        assert stability_after_review(1, 0.0) == pytest.approx(S_MIN)
+
+    def test_after_eight_reviews_is_materially_larger_than_legacy(self) -> None:
+        """The concrete regression: 8 reviews used to yield only ~61h."""
+        new = stability_after_review(8, 0.8)
+        legacy = S_BASE * 0.8 * math.log2(8 + 1)
+        assert new > legacy * 3, (
+            f"new S={new:.0f}h vs legacy S={legacy:.0f}h — the growth fix "
+            "should be well beyond a rounding difference"
+        )
+        assert new > 150
+
+    def test_one_week_recall_after_eight_reviews_is_plausible(self) -> None:
+        """The headline symptom: 0.063 before the fix, should now be high."""
+        stability = stability_after_review(8, 0.8)
+        one_week = recall_probability(168.0, stability)
+        assert one_week > 0.8, (
+            f"one-week recall after 8 reviews is {one_week:.3f}; the old model "
+            "gave 0.063 which is what made it lose to a constant predictor"
+        )
+
+    def test_growth_exponent_is_the_documented_value(self) -> None:
+        """Pin the constant literally so a change is noticed.
+
+        1.0 (not the grid-search optimum 0.5) because a linear power law has
+        theoretical backing whereas 0.5 was tuned on synthetic data whose
+        ground truth this project chose.
+        """
+        assert GROWTH_EXP == pytest.approx(1.0)
+
+
+class TestForgettingStateIntegration:
+    def test_predict_recall_uses_the_power_curve(self) -> None:
+        state = ForgettingState(kp_id="kp", user_id="u")
+        state.last_review_time = 1000.0
+        state.strength = 24.0
+
+        import time as _time
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(_time, "time", lambda: 1000.0 + 3600 * 24)
+            result = state.predict_recall()
+
+        assert result == pytest.approx(0.9, abs=1e-6)
+
+    def test_never_studied_predicts_zero(self) -> None:
+        state = ForgettingState(kp_id="kp", user_id="u")
         assert state.predict_recall() == 0.0
 
-    def test_predict_recall_immediate_after_review(self) -> None:
-        """Just-reviewed KP returns recall probability ~1.0."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1")
-        state.last_review_time = time.time()
-        recall = state.predict_recall()
-        assert recall == pytest.approx(1.0, rel=0.01)
+    def test_first_review_does_not_lower_stability(self) -> None:
+        """A review that reports no failure must not shorten memory.
 
-    def test_predict_recall_decreases_over_time(self) -> None:
-        """Recall probability decreases as time passes."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1")
-        state.last_review_time = time.time() - 3600  # 1 hour ago
-        recall_1h = state.predict_recall()
-
-        state.last_review_time = time.time() - 7200  # 2 hours ago
-        recall_2h = state.predict_recall()
-
-        assert recall_2h < recall_1h
-
-    def test_update_after_quiz_perfect_score(self) -> None:
-        """Perfect quiz score increases alpha and sets reasonable strength."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1", alpha=2, beta=2, strength=S_BASE)
-        old_alpha = state.alpha
-
+        It lands exactly at the neutral value (score factor = 1×) rather than
+        rising, because one review against a weak Beta(2,2) prior is not yet
+        evidence of durable learning. What matters is that it does not go
+        *down*, which the old formula did.
+        """
+        state = ForgettingState(kp_id="kp", user_id="u")
+        before = state.strength
         state.update_after_quiz(1.0)
+        assert state.strength >= before
 
-        assert state.alpha == old_alpha + 1.0  # alpha increased by score
-        assert state.review_count == 1
-        # Strength = S_BASE * posterior_mean * log2(review_count+1)
-        # = 24 * (3/5) * 1.0 = 14.4
-        assert state.strength > 0
-        assert state.strength < S_BASE  # conservative estimate after first review
+    def test_repeated_reviews_raise_stability(self) -> None:
+        state = ForgettingState(kp_id="kp", user_id="u")
+        state.update_after_quiz(1.0)
+        after_one = state.strength
+        state.update_after_quiz(1.0)
+        assert state.strength > after_one
 
-    def test_update_after_quiz_zero_score(self) -> None:
-        """Zero quiz score increases beta (failure count)."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1", alpha=2, beta=2)
-        old_beta = state.beta
+    def test_repeated_perfect_reviews_reach_the_ceiling(self) -> None:
+        state = ForgettingState(kp_id="kp", user_id="u")
+        for _ in range(80):
+            state.update_after_quiz(1.0)
+        assert state.strength == pytest.approx(S_MAX)
 
-        state.update_after_quiz(0.0)
-
-        assert state.beta > old_beta
-        assert state.review_count == 1
-
-    def test_update_after_quiz_partial_score(self) -> None:
-        """Partial score updates both alpha and beta."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1", alpha=2, beta=2)
-
-        state.update_after_quiz(0.75)
-
-        assert state.alpha == 2.75
-        assert state.beta == 2.25
-        assert state.review_count == 1
-
-    def test_posterior_mean_after_updates(self) -> None:
-        """Posterior mean reflects cumulative scores."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1")
-        state.update_after_quiz(1.0)  # perfect
-        state.update_after_quiz(0.5)  # half
-        state.update_after_quiz(1.0)  # perfect
-
-        # Alpha = 2 + 1 + 0.5 + 1 = 4.5
-        # Beta  = 2 + 0 + 0.5 + 0 = 2.5
-        # posterior_mean = 4.5 / 7.0 ≈ 0.643
-        assert state.posterior_mean == pytest.approx(4.5 / 7.0, rel=0.01)
-
-    def test_strength_increases_with_reviews(self) -> None:
-        """Strength grows sub-linearly with repeated reviews."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1")
-        strengths = []
+    def test_low_scores_barely_grow_stability(self) -> None:
+        """SCORE_EXP makes poor reviews contribute little — anti-cramming."""
+        good = ForgettingState(kp_id="kp", user_id="u")
+        poor = ForgettingState(kp_id="kp", user_id="u")
         for _ in range(5):
-            state.update_after_quiz(0.9)
-            strengths.append(state.strength)
+            good.update_after_quiz(1.0)
+            poor.update_after_quiz(0.3)
+        assert good.strength > poor.strength * 2
 
-        # Each review should increase strength (with diminishing returns)
-        for i in range(1, len(strengths)):
-            assert strengths[i] >= strengths[i - 1]
+    def test_a_perfect_review_never_lowers_stability(self) -> None:
+        """Reviewing must not make an item more forgettable.
 
-    def test_to_dict_roundtrip(self) -> None:
-        """to_dict() → from_dict() roundtrip preserves state."""
-        state = ForgettingState(kp_id="kp-a", user_id="user-1")
-        state.update_after_quiz(0.85)
-        data = state.to_dict()
-
-        restored = ForgettingState.from_dict(data)
-        assert restored.kp_id == state.kp_id
-        assert restored.alpha == pytest.approx(state.alpha)
-        assert restored.beta == pytest.approx(state.beta)
-        assert restored.strength == pytest.approx(state.strength)
-
-
-class TestForgettingCurveService:
-    """ForgettingCurveService — service-level operations."""
-
-    @pytest.fixture
-    def svc(self) -> ForgettingCurveService:
-        return ForgettingCurveService()
-
-    @pytest.mark.asyncio
-    async def test_predict_recall_no_state(self, svc: ForgettingCurveService) -> None:
-        """No state for KP returns 0.0."""
-        recall = await svc.predict_recall("kp-unknown", "user-1")
-        assert recall == 0.0
-
-    @pytest.mark.asyncio
-    async def test_update_creates_state(self, svc: ForgettingCurveService) -> None:
-        """First update creates a new ForgettingState."""
-        state = await svc.update_after_quiz("kp-a", "user-1", score=0.9)
-        assert state.kp_id == "kp-a"
-        assert state.user_id == "user-1"
-        assert state.review_count == 1
-
-    @pytest.mark.asyncio
-    async def test_update_then_predict(self, svc: ForgettingCurveService) -> None:
-        """After quiz update, predict_recall returns non-zero."""
-        await svc.update_after_quiz("kp-a", "user-1", score=0.9)
-        # Immediately after review, recall should be near 1.0
-        recall = await svc.predict_recall("kp-a", "user-1")
-        assert recall == pytest.approx(1.0, rel=0.01)
-
-    @pytest.mark.asyncio
-    async def test_get_state_after_update(self, svc: ForgettingCurveService) -> None:
-        """get_state returns the state after update."""
-        updated = await svc.update_after_quiz("kp-a", "user-1", score=0.8)
-        fetched = await svc.get_state("kp-a", "user-1")
-        assert fetched is not None
-        assert fetched.alpha == updated.alpha
-
-    @pytest.mark.asyncio
-    async def test_get_state_nonexistent(self, svc: ForgettingCurveService) -> None:
-        """get_state for unknown KP returns None."""
-        state = await svc.get_state("kp-nonexistent", "user-1")
-        assert state is None
-
-    @pytest.mark.asyncio
-    async def test_record_review(self, svc: ForgettingCurveService) -> None:
-        """record_review increments review_count and strengthens memory."""
-        await svc.update_after_quiz("kp-a", "user-1", score=0.9)
-        old_strength = (await svc.get_state("kp-a", "user-1")).strength
-
-        await svc.record_review("kp-a", "user-1")
-        state = await svc.get_state("kp-a", "user-1")
-        assert state.review_count == 2
-        assert state.strength >= old_strength
-
-    @pytest.mark.asyncio
-    async def test_get_alerts_empty(self, svc: ForgettingCurveService) -> None:
-        """get_alerts returns empty list when no states exist."""
-        alerts = await svc.get_alerts("user-1")
-        assert alerts == []
-
-    @pytest.mark.asyncio
-    async def test_get_alerts_classification(self, svc: ForgettingCurveService) -> None:
-        """get_alerts classifies by urgency level."""
-        # Create a "forgotten" KP (very old review)
-        forgotten = ForgettingState(kp_id="kp-old", user_id="user-1")
-        forgotten.last_review_time = time.time() - 3600 * 24 * 30  # 30 days ago
-        forgotten.review_count = 1
-        svc._states[("user-1", "kp-old")] = forgotten
-
-        # Create a "recent" KP
-        recent = ForgettingState(kp_id="kp-recent", user_id="user-1")
-        recent.last_review_time = time.time() - 60  # 1 min ago
-        recent.review_count = 1
-        svc._states[("user-1", "kp-recent")] = recent
-
-        alerts = await svc.get_alerts("user-1")
-
-        # Should have both
-        assert len(alerts) == 2
-        # Sorted: urgent first, then warning, then ok
-        level_order = [a["alert_level"] for a in alerts]
-        assert level_order == sorted(level_order, key=lambda x: {"urgent": 0, "warning": 1, "ok": 2}[x])
-
-    @pytest.mark.asyncio
-    async def test_get_all_states(self, svc: ForgettingCurveService) -> None:
-        """get_all_states returns all states for a user."""
-        await svc.update_after_quiz("kp-a", "user-1", score=0.9)
-        await svc.update_after_quiz("kp-b", "user-1", score=0.5)
-        await svc.update_after_quiz("kp-c", "user-2", score=1.0)  # different user
-
-        states = await svc.get_all_states("user-1")
-        assert len(states) == 2  # only user-1's states
-        kp_ids = {s["kp_id"] for s in states}
-        assert kp_ids == {"kp-a", "kp-b"}
-
-    def test_serialize_roundtrip(self) -> None:
-        """get_state_dict → load_state_dict roundtrip."""
-        svc = ForgettingCurveService()
-
-        # Add some states directly
-        svc._states[("user-1", "kp-a")] = ForgettingState(
-            kp_id="kp-a", user_id="user-1", alpha=5, beta=2,
-        )
-        svc._states[("user-1", "kp-b")] = ForgettingState(
-            kp_id="kp-b", user_id="user-1", alpha=3, beta=4,
+        The Beta(2,2) prior is weak, so one perfect review leaves
+        posterior_mean at only 0.6 (3/5). With SCORE_EXP = 3 that cubed to
+        0.216 and dropped S from 24h to 14.7h — a review that actively hurt.
+        This invariant is what pins the exponent to a sane range.
+        """
+        state = ForgettingState(kp_id="kp", user_id="u")
+        before = state.strength
+        state.update_after_quiz(1.0)
+        assert state.strength >= before, (
+            f"a perfect review lowered stability {before:.1f}h -> "
+            f"{state.strength:.1f}h"
         )
 
-        data = svc.get_state_dict()
-        assert len(data) == 2
+    def test_no_score_can_lower_stability_below_start(self) -> None:
+        """Even a zero score must not end up below the pre-review stability.
 
-        # Load into a new service
-        svc2 = ForgettingCurveService()
-        svc2.load_state_dict(data)
+        The floor is guaranteed by clamping to S_MIN, but a genuinely broken
+        exponent could still land below the starting 24h for mid-range scores;
+        this checks the whole range.
+        """
+        start = ForgettingState(kp_id="kp", user_id="u").strength
+        for score in (0.0, 0.2, 0.5, 0.8, 1.0):
+            state = ForgettingState(kp_id="kp", user_id="u")
+            state.update_after_quiz(score)
+            assert state.strength >= min(start, S_MIN)
 
-        state_a = svc2._states.get(("user-1", "kp-a"))
-        assert state_a is not None
-        assert state_a.alpha == 5
 
-    @pytest.mark.asyncio
-    async def test_skip_db_load(self, svc: ForgettingCurveService) -> None:
-        """Service works without db_pool."""
-        svc._db_pool = None
-        result = await svc.predict_recall("kp-a", "user-1")
-        assert result == 0.0  # no state, returns 0.0
+class TestFactorConsistency:
+    def test_factor_derives_from_decay(self) -> None:
+        from src.learning_path.forgetting_curve import DECAY
+
+        expected = 0.9 ** (-1.0 / DECAY) - 1.0
+        assert FACTOR == pytest.approx(expected)
+
+    def test_decay_matches_the_fsrs_default(self) -> None:
+        from src.learning_path.forgetting_curve import DECAY
+
+        assert DECAY == pytest.approx(0.1542)

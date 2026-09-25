@@ -60,12 +60,36 @@ class RAGBenchmarkRunner:
         self._rag: RAGRetrievalService | None = None
         self._results_cache: dict[str, list[RAGResult]] = {}
         self._llm_adapter = None
+        # Counts queries whose answer generation failed. Reported explicitly so
+        # a run where most queries were skipped is visibly not a quality
+        # measurement — silently averaging over a shrunken sample is how a
+        # pipeline failure previously got misread as poor generation quality.
+        self._generation_failures = 0
 
     async def connect(self) -> None:
-        """Connect to Neo4j + VectorIndex and set up RAG service."""
-        self._pool = Neo4jPool("bolt://neo4j:7687", "neo4j", "edumap_dev")
+        """Connect to Neo4j + VectorIndex and set up RAG service.
+
+        Connection parameters come from ``settings`` rather than being hardcoded
+        to the Docker service names, so the benchmark also runs from the host —
+        the same convention ``run_strategy_comparison.py`` and
+        ``run_fusion_ablation.py`` follow.
+        """
+        # httpx honours the system proxy and does not read the OS exception
+        # list, so localhost traffic gets intercepted on machines running
+        # Clash/Surge. Set the bypass before any client is built.
+        local = "localhost,127.0.0.1,::1"
+        existing = os.environ.get("no_proxy", "")
+        if "localhost" not in existing:
+            os.environ["no_proxy"] = (
+                f"{existing},{local}".strip(",") if existing else local
+            )
+        os.environ["NO_PROXY"] = os.environ["no_proxy"]
+
+        self._pool = Neo4jPool(
+            settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password
+        )
         kp_repo = KnowledgePointRepository(self._pool)
-        vi = VectorIndex(host="chromadb", port=8000)
+        vi = VectorIndex(host=settings.chroma_host, port=settings.chroma_port)
         self._rag = RAGRetrievalService(
             vector_index=vi,
             kp_repo=kp_repo,
@@ -342,6 +366,11 @@ class RAGBenchmarkRunner:
                 "query": query,
                 "difficulty": difficulty,
                 "answer": answer,
+                # Stored so the judge step can score each answer against the
+                # context it was actually generated from. Reporting the
+                # per-query context was previously not kept, which is what let
+                # the judge loop accidentally reuse one shared context.
+                "context": context.context_str,
                 "context_length": len(context.context_str),
                 "faithfulness": f_result,
                 "semantic_faithfulness": sem_result["faithfulness"],
@@ -373,6 +402,13 @@ class RAGBenchmarkRunner:
 
         aggregated = {
             "n_queries": n,
+            # Report attempts vs. successes separately. Averaging only over
+            # successes makes a partially-failed run look like a clean
+            # measurement: the numbers stay plausible while the sample silently
+            # shrinks. Anyone reading a low faithfulness score needs to know
+            # whether it came from bad answers or from missing ones.
+            "n_attempted": self._generation_failures + n,
+            "n_generation_failed": self._generation_failures,
             "avg_faithfulness": avg_faithfulness,
             "avg_semantic_faithfulness": avg_semantic_faithfulness,
             "avg_semantic_similarity": avg_semantic_sim,
@@ -386,14 +422,23 @@ class RAGBenchmarkRunner:
             from src.rag.evaluation.llm_judge import llm_faithfulness as llm_f_judge
             llm_scores = []
             for sample in generation_results[:3]:
+                # Use THIS sample's context. The previous version read a
+                # `context` variable left over from the loop above, so every
+                # sample was judged against the last query's context — a
+                # silently wrong measurement rather than a missing one.
                 judge = await llm_f_judge(
                     answer=sample["answer"],
-                    context=context.context_str if "context" in locals() else "",
+                    context=sample.get("context", "") or "",
                     llm=llm,
                 )
+                # Skip heuristic fallbacks: reporting one under the judge label
+                # would collapse the two independent measurements into one.
+                if not judge.get("used_judge", False):
+                    continue
                 llm_scores.append(judge.get("faithfulness_score", 0))
             if llm_scores:
                 aggregated["llm_faithfulness_avg"] = round(sum(llm_scores) / len(llm_scores), 4)
+                aggregated["llm_judge_samples"] = len(llm_scores)
         except Exception as exc:
             logger.warning("LLM-as-judge failed: %s", exc)
 
@@ -474,7 +519,14 @@ class RAGBenchmarkRunner:
             return text[:2000]
         except Exception as exc:
             logger.warning("LLM generation failed for query '%s': %s", query[:30], exc)
-            return f"（LLM 生成失败: {exc}）"
+            # Return empty so the caller's `if not answer: continue` skips this
+            # query. Returning an error *string* here was a real bug: the
+            # placeholder was fed to the faithfulness/relevancy metrics as if it
+            # were an answer, driving both to ~0 and making a failed LLM run look
+            # like poor generation quality. That is exactly how the recorded
+            # "Faithfulness 0.010 / Relevancy 0.000" numbers were produced.
+            self._generation_failures += 1
+            return ""
 
     # ── Report ───────────────────────────────────────────────────
 
@@ -558,9 +610,13 @@ class RAGBenchmarkRunner:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "config": {
                 "k_values": self.K_VALUES,
-                "chromadb_host": "chromadb",
-                "chromadb_port": 8000,
-                "embedding_model": "BAAI/bge-small-zh-v1.5",
+                # Report the host actually used — a hardcoded value here made
+                # the saved report describe a different setup than the one that
+                # produced its numbers.
+                "chromadb_host": settings.chroma_host,
+                "chromadb_port": settings.chroma_port,
+                "neo4j_uri": settings.neo4j_uri,
+                "embedding_model": settings.llm_embedding_model,
                 "reranker_enabled": self._rag._reranker is not None if self._rag else False,
                 "reranker_model": settings.reranker_model if (self._rag and self._rag._reranker is not None) else None,
                 "expand_query_enabled": self._rag._expand_query_enabled if self._rag else False,

@@ -590,3 +590,124 @@ class TestFetchProfile:
 
         monkeypatch.setattr(httpx, "AsyncClient", _TimeoutClient)
         assert asyncio.run(_fetch_profile("u1")) is None
+
+
+class TestQuizGradingEndpoint:
+    """POST /quiz/grade — server-side grading + IRT mastery.
+
+    Grading previously happened only in the browser (quiz-result.tsx compared
+    answers client-side) while the backend's IRT estimator sat unused. This
+    endpoint is what makes the server the authority on the score, and what
+    gives the mastery model the raw responses it needs.
+    """
+
+    _QUESTIONS = [
+        {
+            "id": "q1", "type": "choice", "content": "1+1=?",
+            "correct_answer": "2", "knowledge_point_id": "kp-test", "difficulty": 3,
+        },
+        {
+            "id": "q2", "type": "choice", "content": "2+2=?",
+            "correct_answer": "4", "knowledge_point_id": "kp-test", "difficulty": 3,
+        },
+    ]
+
+    def test_all_correct_scores_one(self, client):
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": self._QUESTIONS,
+            "answers": {"q1": "2", "q2": "4"},
+            "kp_id": "kp-test",
+        })
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["score"] == 1.0
+        assert body["n_correct"] == 2
+        assert body["n_questions"] == 2
+
+    def test_all_wrong_scores_zero(self, client):
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": self._QUESTIONS,
+            "answers": {"q1": "9", "q2": "9"},
+            "kp_id": "kp-test",
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["score"] == 0.0
+
+    def test_mastery_delta_is_keyed_and_signed(self, client):
+        """The response carries the delta the profile update consumes."""
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": self._QUESTIONS,
+            "answers": {"q1": "2", "q2": "4"},
+            "kp_id": "kp-test",
+            "prior_mastery": 0.4,
+        })
+        body = resp.json()
+        assert set(body["mastery_delta"]) == {"kp-test"}
+        assert body["mastery_delta"]["kp-test"] > 0
+
+    def test_mastery_delta_negative_on_failure(self, client):
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": self._QUESTIONS,
+            "answers": {"q1": "9", "q2": "9"},
+            "kp_id": "kp-test",
+            "prior_mastery": 0.8,
+        })
+        assert resp.json()["mastery_delta"]["kp-test"] < 0
+
+    def test_blank_answer_counts_as_wrong(self, client):
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": self._QUESTIONS,
+            "answers": {"q1": "", "q2": "4"},
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["n_correct"] == 1
+
+    def test_missing_answers_key_counts_as_wrong(self, client):
+        """A partial submission must not inflate the score."""
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": self._QUESTIONS,
+            "answers": {"q1": "2"},  # q2 unanswered
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["n_correct"] == 1
+
+    def test_harder_questions_yield_higher_mastery(self, client):
+        """IRT weights a correct answer on a hard item more heavily."""
+        def _qs(difficulty):
+            return [dict(q, difficulty=difficulty) for q in self._QUESTIONS]
+
+        easy = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": _qs(1), "answers": {"q1": "2", "q2": "4"},
+        }).json()
+        hard = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": _qs(5), "answers": {"q1": "2", "q2": "4"},
+        }).json()
+
+        assert hard["mastery"] > easy["mastery"]
+
+    def test_rejects_empty_questions(self, client):
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": [], "answers": {"q1": "2"},
+        })
+        assert resp.status_code == 422
+
+    def test_rejects_empty_answers(self, client):
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": self._QUESTIONS, "answers": {},
+        })
+        assert resp.status_code == 422
+
+    def test_rejects_malformed_questions(self, client):
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": [{"no_id": True}], "answers": {"q1": "2"},
+        })
+        assert resp.status_code == 422
+
+    def test_per_question_detail_is_returned(self, client):
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": self._QUESTIONS,
+            "answers": {"q1": "2", "q2": "9"},
+        })
+        detail = resp.json()["per_question"]
+        assert len(detail) == 2
+        assert [d["correct"] for d in detail] == [True, False]

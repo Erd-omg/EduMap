@@ -25,6 +25,7 @@ from src.learning_path.models import (
     PersonalizedPath,
     ProgressRecord,
 )
+from src.utils.db_pool import unwrap_pool
 
 if TYPE_CHECKING:
     from src.kg.repositories.knowledge_point_repo import KnowledgePointRepository
@@ -69,7 +70,7 @@ class PathService:
         self._edge_repo = edge_repo
         # In-memory progress store (prototype — replace with DB later)
         self._progress: dict[str, list[ProgressRecord]] = {}
-        self._db_pool = db_pool  # Optional asyncpg pool for persistence
+        self._db_pool = unwrap_pool(db_pool, owner="PathService")
         self._progress_loaded: set[str] = set()
         # path_recommendations 建表只需成功执行一次（见 save_recommendation）
         self._reco_table_ready: bool = False

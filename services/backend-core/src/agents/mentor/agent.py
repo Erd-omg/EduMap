@@ -39,6 +39,60 @@ def _format_conversation_history(history: list[dict] | None) -> str:
     return formatted if formatted else "（暂无对话历史）"
 
 
+def _as_offset(value: object) -> int | None:
+    """Coerce a metadata value to a character offset, or None if unusable.
+
+    Accepts ints **and int-valued floats**: character counts travel through
+    JSON and numpy, so ``1200`` can arrive as ``1200.0``. An earlier version
+    used ``isinstance(value, int)``, which silently dropped those — leaving
+    ``char_start=None`` alongside a valid ``char_end``. Half a span is worse
+    than none: the frontend's "is the span known?" check then fails and no
+    highlight is shown at all, even though the offset was perfectly available.
+
+    Non-integral floats are rejected rather than truncated: a fractional offset
+    would indicate the value is not a character index at all.
+    """
+    if isinstance(value, bool):
+        # bool is an int subclass; True/False are not offsets.
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):  # NaN/inf
+            return None
+        if not value.is_integer():
+            return None
+        return int(value)
+    return None
+
+
+def _source_span(metadata: dict | None) -> dict:
+    """Extract ``char_start``/``char_end`` from chunk metadata, if present.
+
+    Returns a dict suitable for ``MentorSource(**span)``. Missing keys are
+    omitted rather than defaulted to 0 — ``None`` means "span unknown" and the
+    frontend must not highlight from it.
+
+    Both endpoints must be present for either to be passed: a one-sided span is
+    unrenderable, and emitting it would make the caller's "span known?" test
+    behave differently from what the values imply.
+    """
+    if not metadata:
+        return {}
+    start = _as_offset(metadata.get("char_start"))
+    end = _as_offset(metadata.get("char_end"))
+    if start is None or end is None:
+        return {}
+    if end <= start:
+        # An inverted or empty span cannot be highlighted; treat as absent.
+        return {}
+    span = {"char_start": start, "char_end": end}
+    page = _as_offset(metadata.get("page_number"))
+    if page is not None and page >= 1:
+        span["page_number"] = page
+    return span
+
+
 class MentorAgent(BaseAgent):
     """RAG-constrained learning Q&A agent.
 
@@ -101,6 +155,8 @@ class MentorAgent(BaseAgent):
                     type=s.source_type,
                     score=s.score,
                     summary=s.content[:200],
+                    resource_id=s.metadata.get("resource_id"),
+                    **_source_span(s.metadata),
                 )
                 for s in context.sources
             ],
@@ -154,6 +210,9 @@ class MentorAgent(BaseAgent):
                 # Chroma chunk metadata carries resource_id — lets the
                 # frontend open the original uploaded material.
                 resource_id=s.metadata.get("resource_id"),
+                # ...and the character span, so the frontend can highlight the
+                # cited passage instead of only naming the chunk.
+                **_source_span(s.metadata),
             )
             for s in context.sources
         ]

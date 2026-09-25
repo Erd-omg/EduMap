@@ -67,9 +67,9 @@ class DocumentParser:
         if not path.exists():
             return {"chunks": 0, "chars": 0, "error": f"File not found: {file_path}"}
 
-        # 1. Extract text
+        # 1. Extract text (and, where the format has pages, their boundaries)
         try:
-            text = self._extract_text(path)
+            text, page_starts = self._extract_text(path)
         except Exception as exc:
             logger.exception("Text extraction failed for %s", resource_name)
             return {"chunks": 0, "chars": 0, "error": str(exc)}
@@ -88,7 +88,16 @@ class DocumentParser:
         if not chunks:
             return {"chunks": 0, "chars": len(text), "error": "Chunking produced no output"}
 
-        # 3. Embed and index (if VectorIndex available)
+        # 2.5 Locate chunks in the source text.
+        #
+        # Done once and reused for both the vector-store metadata (below, in
+        # _embed_and_index) and the chunk previews returned here — computing it
+        # twice would be wasteful and could drift.
+        from src.resources.provenance import locate_chunks, pages_for_span
+
+        spans = locate_chunks(text, chunks)
+
+        # Embed and index (if VectorIndex available)
         indexed = 0
         if vector_index is not None:
             try:
@@ -99,6 +108,8 @@ class DocumentParser:
                     vector_index=vector_index,
                     kp_id=kp_id,
                     kp_name=kp_name,
+                    spans=spans,
+                    page_starts=page_starts,
                 )
             except Exception as exc:
                 logger.exception("Embedding/indexing failed for %s", resource_name)
@@ -114,8 +125,23 @@ class DocumentParser:
             "chars": len(text),
             "indexed": indexed,
             "error": None,
+            # Character offsets travel with the previews so the UI can highlight
+            # the cited passage rather than only naming the chunk. None (not 0)
+            # when a chunk could not be located — 0 would point at the start of
+            # the document and silently highlight the wrong text.
             "in_memory_chunks": [
-                {"index": i, "text": chunk[:200], "char_count": len(chunk)}
+                {
+                    "index": i,
+                    "text": chunk[:200],
+                    "char_count": len(chunk),
+                    "char_start": spans[i].char_start if i < len(spans) else None,
+                    "char_end": spans[i].char_end if i < len(spans) else None,
+                    "page_number": pages_for_span(
+                        spans[i].char_start if i < len(spans) else None,
+                        spans[i].char_end if i < len(spans) else None,
+                        page_starts,
+                    ),
+                }
                 for i, chunk in enumerate(chunks)
             ] if chunks else [],
         }
@@ -126,20 +152,33 @@ class DocumentParser:
         """Extract text from a file based on its extension."""
         ext = path.suffix.lower()
 
+        # Every branch returns (text, page_starts). Only formats that carry a
+        # page concept report boundaries; plain text files return an empty list,
+        # which downstream code treats as "no page attribution available".
         if ext in (".pdf", ".docx", ".pptx"):
             return self._extract_with_unstructured(path)
         elif ext == ".md":
-            return path.read_text(encoding="utf-8", errors="replace")
+            return path.read_text(encoding="utf-8", errors="replace"), []
         elif ext == ".txt":
-            return path.read_text(encoding="utf-8", errors="replace")
+            return path.read_text(encoding="utf-8", errors="replace"), []
         elif ext in (".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".csv", ".json", ".yaml", ".yml"):
-            return self._extract_code(path)
+            return self._extract_code(path), []
         else:
             # Fallback: try plain text
-            return path.read_text(encoding="utf-8", errors="replace")
+            return path.read_text(encoding="utf-8", errors="replace"), []
 
-    def _extract_with_unstructured(self, path: Path) -> str:
-        """Use the ``unstructured`` library to extract text from PDF/DOCX/PPTX."""
+    def _extract_with_unstructured(self, path: Path) -> tuple[str, list[int]]:
+        """Extract text from PDF/DOCX/PPTX, plus where each page starts.
+
+        Returns ``(text, page_starts)`` where ``page_starts[i]`` is the character
+        offset in *text* at which page ``i + 1`` begins. The offsets are what let
+        a chunk be attributed to a page later — joining the elements into one
+        string (as this used to do) discards the only record of that boundary.
+
+        Page attribution is best-effort: DOCX/PPTX and text-layer-less PDFs may
+        report no page numbers per element, in which case ``page_starts`` comes
+        back empty and consumers fall back to character offsets alone.
+        """
         try:
             from unstructured.partition.auto import partition  # type: ignore[import-untyped]
         except ImportError:
@@ -148,10 +187,32 @@ class DocumentParser:
                 "Install with: pip install 'unstructured[pdf,docx,pptx]'",
                 path.name,
             )
-            return path.read_text(encoding="utf-8", errors="replace")
+            return path.read_text(encoding="utf-8", errors="replace"), []
 
         elements = partition(str(path))
-        return "\n\n".join(str(el) for el in elements)
+
+        parts: list[str] = []
+        page_starts: list[int] = []
+        cursor = 0
+        last_page: int | None = None
+
+        for el in elements:
+            page = getattr(el.metadata, "page_number", None) if el.metadata else None
+            # Record where a page begins. Elements are emitted in document
+            # order, so the first element bearing page N marks that page's
+            # start; later elements on the same page do not.
+            if isinstance(page, int) and page != last_page:
+                # Guard against a page number appearing out of order (some
+                # parsers interleave headers/footers): only accept increases.
+                if not page_starts or page > len(page_starts):
+                    page_starts.append(cursor)
+                last_page = page
+
+            text_piece = str(el)
+            parts.append(text_piece)
+            cursor += len(text_piece) + 2  # +2 for the "\n\n" join below
+
+        return "\n\n".join(parts), page_starts
 
     def _extract_code(self, path: Path) -> str:
         """Extract meaningful text from code files — reads as-is but strips excessive blank lines."""
@@ -276,8 +337,15 @@ class DocumentParser:
         vector_index: VectorIndex,
         kp_id: str | None = None,
         kp_name: str | None = None,
+        spans: list | None = None,
+        page_starts: list[int] | None = None,
     ) -> int:
-        """Embed chunks and upsert into ChromaDB."""
+        """Embed chunks and upsert into ChromaDB.
+
+        ``spans`` are the located character offsets for each chunk (from
+        ``locate_chunks``); when omitted the span fields are simply absent from
+        the metadata rather than wrong.
+        """
         collection = self._get_or_create_resource_collection(vector_index)
         if collection is None:
             # ChromaDB unavailable (in-memory fallback) — store in VectorIndex's
@@ -294,7 +362,12 @@ class DocumentParser:
         embeddings = self._model.encode(chunks, show_progress_bar=False)
         embeddings_list = [emb.tolist() for emb in embeddings]
 
-        # Prepare metadata and IDs
+        # Prepare metadata and IDs.
+        #
+        # Character offsets come in as ``spans`` (recovered by locate_chunks in
+        # the caller) so that provenance works for every chunking strategy
+        # without touching their splitting logic — see
+        # src/resources/provenance.py for why.
         ids: list[str] = []
         metadatas: list[dict] = []
         for i, chunk_text in enumerate(chunks):
@@ -307,6 +380,23 @@ class DocumentParser:
                 "source": "user_upload",
                 "text_preview": chunk_text[:200],
             }
+            # Span within the source document. None (not 0) when the chunk could
+            # not be located, so a missing span is distinguishable from "starts
+            # at the beginning" — defaulting to 0 would silently point every
+            # such citation at the document's first character.
+            if spans is not None and i < len(spans):
+                meta["char_start"] = spans[i].char_start
+                meta["char_end"] = spans[i].char_end
+                # Page attribution, derived from the chunk's start offset.
+                # None (not 1) when the format has no page concept — see
+                # provenance.pages_for_span.
+                from src.resources.provenance import pages_for_span
+
+                page = pages_for_span(
+                    spans[i].char_start, spans[i].char_end, page_starts or []
+                )
+                if page is not None:
+                    meta["page_number"] = page
             if kp_id:
                 meta["kp_id"] = kp_id
             if kp_name:
@@ -317,7 +407,11 @@ class DocumentParser:
         batch_size = 100
         total_upserted = 0
         for batch_start in range(0, len(ids), batch_size):
-            batch_end = batch_start + batch_size
+            # Clamp the end. Slicing would tolerate an overlong index (Python
+            # truncates), but the *count* below is computed from these bounds —
+            # so an unclamped batch_end reported a full batch_size even for a
+            # partial one. A 19-chunk document was reported as "indexed: 100".
+            batch_end = min(batch_start + batch_size, len(ids))
             collection.upsert(
                 ids=ids[batch_start:batch_end],
                 embeddings=embeddings_list[batch_start:batch_end],

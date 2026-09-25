@@ -268,6 +268,9 @@ async def get_resource_chunks(
                 index=c["index"],
                 text_preview=c["text"],
                 char_count=c["char_count"],
+                char_start=c.get("char_start"),
+                char_end=c.get("char_end"),
+                page_number=c.get("page_number"),
             )
             for c in memory_chunks[:limit]
         ]
@@ -308,9 +311,15 @@ async def get_resource_chunks(
                 doc_text = documents[i] if i < len(documents) and documents[i] else None
                 text_preview = doc_text or meta_item.get("text_preview", "")
                 chunks.append(ChunkPreview(
-                    index=i,
+                    # Prefer the stored chunk_index over the enumeration order:
+                    # ChromaDB does not guarantee `get` returns rows in index
+                    # order, so `i` can disagree with the real position.
+                    index=int(meta_item.get("chunk_index", i)),
                     text_preview=str(text_preview)[:200],
                     char_count=len(str(text_preview)),
+                    char_start=meta_item.get("char_start"),
+                    char_end=meta_item.get("char_end"),
+                    page_number=meta_item.get("page_number"),
                 ))
 
         total = len(results.get("ids", [])) if results else 0

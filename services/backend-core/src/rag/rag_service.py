@@ -74,7 +74,8 @@ class RAGRetrievalService:
         self.fusion_k: int = 60  # RRF 常数
 
     # 默认融合策略（子类或 main.py 可覆盖；亦可由 Settings.hybrid_fusion_method 注入）
-    default_fusion_method: str = "rrf"
+    # "score" 是 n=200 实测最优（MRR 0.9002 vs rrf 0.8569）；详见 src/config.py 注释。
+    default_fusion_method: str = "score"
 
     def enable_result_cache(self, maxsize: int = 256, ttl_seconds: float = 300.0) -> None:
         """Turn on memoisation of search results keyed on the normalised query."""
@@ -510,9 +511,13 @@ class RAGRetrievalService:
         """Merge, deduplicate, and rank across heterogeneous sources.
 
         ``method`` 决定融合策略（None 时取 ``cls.default_fusion_method``）：
-          - "score"  : 各自源内保留最高分；按 score 降序（旧行为，用于回退/对照）
+          - "score"  : 各自源内保留最高分；按 score 降序。**当前默认** ——
+                       n=200 实测最优（MRR 0.9002 vs rrf 0.8569）。
           - "minmax" : 各自源内 min-max 归一化到 [0,1] 后再统一排序
           - "rrf"    : Reciprocal Rank Fusion，score = Σ 1/(k+rank)，只看顺序
+
+        未知 ``method`` 回退到 **RRF**（而非默认的 score）：RRF 只依赖名次，
+        对单源故障最稳健，作为非法输入的兜底更安全。
 
         所有策略均按 **``source_id``**（文档身份）去重，``source_type`` 仅作为
         「来自哪一路召回」的溯源标记保留在结果上。

@@ -164,10 +164,25 @@ async def lifespan(app: FastAPI):
     )
     app.state.tool_registry = tool_registry
 
+    # ── Durable graph state (I-6) ───────────────────────────────────────
+    # Started here rather than inside _configure_agents because pool creation
+    # is async while that function is not. A failure is non-fatal: the graph
+    # then compiles without a checkpointer and progress reporting continues via
+    # the Redis snapshot.
+    from src.agents.orchestrator.checkpointing import CheckpointerHolder
+
+    checkpointer_holder = CheckpointerHolder(settings.database_url)
+    await checkpointer_holder.start()
+    app.state.checkpointer_holder = checkpointer_holder
+
     # ── Configure agents + orchestrator graph ───────────────────────────
-    _configure_agents(app, pool, llm)
+    _configure_agents(app, pool, llm, checkpointer=checkpointer_holder.saver)
 
     yield
+    # Close the checkpointer before the pools it depends on: its psycopg pool
+    # is separate from the asyncpg ones, but tearing it down first keeps the
+    # ordering obvious and avoids closing a database that is still in use.
+    await checkpointer_holder.stop()
     await pool.close()
     if memory_ops is not None:
         from src.memory.db import MemoryDBPool
@@ -176,7 +191,7 @@ async def lifespan(app: FastAPI):
             await db_pool.close()
 
 
-def _configure_agents(app: FastAPI, pool: Neo4jPool, llm) -> None:
+def _configure_agents(app: FastAPI, pool: Neo4jPool, llm, checkpointer=None) -> None:
     """Wire agent dependencies and configure the LangGraph."""
     from src.kg.repositories.knowledge_point_repo import KnowledgePointRepository
     from src.kg.vector_index import VectorIndex
@@ -220,6 +235,7 @@ def _configure_agents(app: FastAPI, pool: Neo4jPool, llm) -> None:
             **harness_kwargs,
         ),
         assessment=AssessmentAgent(llm_adapter=llm, **harness_kwargs),
+        checkpointer=checkpointer,
     )
 
     # Also update the MentorAgent on app.state with harness services
@@ -261,7 +277,21 @@ async def _init_memory(app: FastAPI):
         logging.warning("Redis unavailable — short-term memory will use in-memory fallback: %s", exc)
         short_term = ShortTermMemory._in_memory_fallback()
 
-    memory_ops = MemoryOperations(short_term=short_term, long_term=long_term)
+    # Encoder for episodic-memory embeddings. Uses the model preloaded into
+    # app.state by _preload_embedding_model, so no second model instance is
+    # held in memory. If preloading failed the memory system still works —
+    # recall just falls back to recency + importance (see MemoryOperations._embed).
+    def _encode_for_memory(text: str) -> list[float]:
+        model = getattr(app.state, "_embedding_model", None)
+        if model is None:
+            return []
+        return model.encode(text, normalize_embeddings=True).tolist()
+
+    memory_ops = MemoryOperations(
+        short_term=short_term,
+        long_term=long_term,
+        embed_fn=_encode_for_memory,
+    )
     app.state.memory_ops = memory_ops
     logging.info("Memory system initialized")
     return memory_ops
