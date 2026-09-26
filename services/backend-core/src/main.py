@@ -81,6 +81,13 @@ async def lifespan(app: FastAPI):
     anti_gaming_service = AntiGamingService(db_pool=forgetting_db_pool)
     app.state.anti_gaming_service = anti_gaming_service
 
+    # ── Quiz store (server-side answer keys) ──────────────────────────────
+    # Holds generated quiz questions so /quiz/grade can key off a server-side
+    # record instead of trusting questions echoed back by the client.  Purely
+    # in-process (single uvicorn worker), so there is nothing to tear down.
+    from src.learning_path.quiz_store import QuizStore
+    app.state.quiz_store = QuizStore()
+
     # ── Resource Repository (PostgreSQL) ──────────────────────────────────
     from src.resources.repository import ResourceRepository
     if forgetting_db_pool:

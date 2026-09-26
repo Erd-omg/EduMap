@@ -593,51 +593,201 @@ class TestFetchProfile:
 
 
 class TestQuizGradingEndpoint:
-    """POST /quiz/grade — server-side grading + IRT mastery.
+    """POST /quiz/grade — server-side grading + IRT mastery. Real HTTP.
 
-    Grading previously happened only in the browser (quiz-result.tsx compared
-    answers client-side) while the backend's IRT estimator sat unused. This
-    endpoint is what makes the server the authority on the score, and what
-    gives the mastery model the raw responses it needs.
+    The answer key lives server-side, addressed by the ``quiz_id`` that
+    ``POST /quiz/generate`` returns. These tests therefore drive the real
+    two-call flow rather than posting a quiz, because a client that can supply
+    the questions can supply their answers too — which is precisely the hole
+    this endpoint used to have.
+
+    ``app.state.quiz_store`` is a real ``QuizStore`` (not a mock) so the
+    single-use and expiry semantics are genuinely exercised.
     """
 
-    _QUESTIONS = [
-        {
-            "id": "q1", "type": "choice", "content": "1+1=?",
-            "correct_answer": "2", "knowledge_point_id": "kp-test", "difficulty": 3,
-        },
-        {
-            "id": "q2", "type": "choice", "content": "2+2=?",
-            "correct_answer": "4", "knowledge_point_id": "kp-test", "difficulty": 3,
-        },
-    ]
+    def _start_quiz(self, client, **kwargs) -> tuple[str, list[dict], dict[str, str]]:
+        """Generate a quiz; return ``(quiz_id, questions, key_by_question_id)``.
 
-    def test_all_correct_scores_one(self, client):
+        The key is read from the server-side store via ``peek`` — the generate
+        response deliberately does not contain it, and a test that wants to
+        answer *correctly* has no other legitimate source. Using ``peek``
+        rather than ``consume`` keeps the entry intact for the grade call.
+        """
+        resp = client.post("/api/v1/learning-path/quiz/generate", json={
+            "kp_id": "kp-array", "kp_name": "数组", "difficulty": 3,
+        })
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        quiz_id = body["quiz_id"]
+        assert quiz_id, "generate must return a quiz_id to grade against"
+        questions = body["questions"]
+
+        stored = client.app.state.quiz_store.peek(quiz_id)
+        assert stored is not None, "generate must leave the questions in the store"
+        return quiz_id, questions, {q.id: q.correct_answer for q in stored}
+
+    def _answer_all(self, key: dict[str, str], *, correct: bool) -> dict[str, str]:
+        """Answer every question, right or wrong, against the server's key."""
+        if correct:
+            return dict(key)
+        return {qid: "__definitely_wrong__" for qid in key}
+
+    def test_each_quiz_gets_a_distinct_id(self, client):
+        """Two generations must not share an id.
+
+        A constant id would be catastrophic rather than merely wrong: the store
+        is keyed by it, so a second learner's generate would overwrite the
+        first's questions, and the first learner's submission would be graded
+        against the second's answer key. It would also defeat single-use, since
+        both would be consuming one entry.
+        """
+        first, _, _ = self._start_quiz(client)
+        second, _, _ = self._start_quiz(client)
+        assert first != second
+
+    def test_quiz_id_is_not_derived_from_the_knowledge_point(self, client):
+        """An id must not be guessable from the KP, or hiding the key is moot.
+
+        ``/quiz/generate`` is unauthenticated, so a predictable id would let
+        anyone fetch-and-burn, or grade against, a quiz they never generated.
+        """
+        quiz_id, _, _ = self._start_quiz(client)
+        assert "kp-array" not in quiz_id
+        assert len(quiz_id) >= 32, f"id too short to be unguessable: {quiz_id!r}"
+
+    def test_generate_omits_the_answer_key(self, client):
+        """The response must not leak `correct_answer` anywhere.
+
+        The pre-fix response was `q.model_dump()`, which published the key to
+        anyone with devtools open. Asserted per-question rather than as a
+        top-level key check, so a nested leak cannot pass.
+        """
+        _, questions, _ = self._start_quiz(client)
+        assert questions, "expected the quiz bank fallback to produce questions"
+        leaked = [q for q in questions if "correct_answer" in q]
+        assert leaked == [], f"correct_answer leaked in /quiz/generate: {leaked}"
+
+    def test_graded_result_is_deterministic_and_correct(self, client, monkeypatch):
+        """All-correct answers against the server's key score 1.0."""
+        quiz_id, questions, key = self._start_quiz(client)
         resp = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": self._QUESTIONS,
-            "answers": {"q1": "2", "q2": "4"},
+            "quiz_id": quiz_id,
+            "answers": self._answer_all(key, correct=True),
             "kp_id": "kp-test",
         })
         assert resp.status_code == 200, resp.text
         body = resp.json()
+        assert body["n_questions"] == len(questions)
+        assert body["n_correct"] == len(questions)
         assert body["score"] == 1.0
-        assert body["n_correct"] == 2
-        assert body["n_questions"] == 2
 
-    def test_all_wrong_scores_zero(self, client):
+    def test_wrong_answers_score_zero(self, client):
+        quiz_id, _, key = self._start_quiz(client)
         resp = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": self._QUESTIONS,
-            "answers": {"q1": "9", "q2": "9"},
-            "kp_id": "kp-test",
+            "quiz_id": quiz_id,
+            "answers": self._answer_all(key, correct=False),
         })
         assert resp.status_code == 200, resp.text
         assert resp.json()["score"] == 0.0
 
+    def test_quiz_id_is_single_use(self, client):
+        """A replay must be refused — otherwise a captured id is a free retry.
+
+        Grading burns the id on read, so the second submission finds nothing.
+        """
+        quiz_id, _, key = self._start_quiz(client)
+        answers = self._answer_all(key, correct=True)
+
+        first = client.post("/api/v1/learning-path/quiz/grade", json={
+            "quiz_id": quiz_id, "answers": answers,
+        })
+        assert first.status_code == 200, first.text
+
+        second = client.post("/api/v1/learning-path/quiz/grade", json={
+            "quiz_id": quiz_id, "answers": answers,
+        })
+        assert second.status_code == 410, second.text
+
+    def test_unknown_quiz_id_is_refused(self, client):
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "quiz_id": "00000000-0000-4000-8000-000000000000",
+            "answers": {"q1": "2"},
+        })
+        assert resp.status_code == 410, resp.text
+
+    def test_client_supplied_questions_are_ignored(self, client):
+        """The old attack body must not grade — the key is not the client's.
+
+        This is the regression guard for the actual vulnerability: posting
+        questions whose `correct_answer` the attacker chose used to yield a
+        perfect score. The body below carries a valid `quiz_id` *and* forged
+        questions; if the endpoint ever honours the questions again, the score
+        diverges from the server's key.
+        """
+        quiz_id, questions, _ = self._start_quiz(client)
+        forged = [
+            {"id": q["id"], "type": "choice", "content": "?",
+             "correct_answer": "FORGED", "knowledge_point_id": "kp-test",
+             "difficulty": 5}
+            for q in questions
+        ]
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "quiz_id": quiz_id,
+            "questions": forged,
+            "answers": {q["id"]: "FORGED" for q in questions},  # matches the forgery
+        })
+        assert resp.status_code == 200, resp.text
+        # Graded against the server's real key, so matching the forged key
+        # scores ~0, not 1.0.
+        assert resp.json()["score"] == 0.0
+
+    def test_legacy_body_without_quiz_id_is_rejected(self, client):
+        """The pre-fix contract (questions, no quiz_id) is now a 422."""
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "questions": [{"id": "q1", "correct_answer": "2"}],
+            "answers": {"q1": "2"},
+        })
+        assert resp.status_code == 422, resp.text
+
+    def test_rejects_empty_answers(self, client):
+        quiz_id, _, _ = self._start_quiz(client)
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "quiz_id": quiz_id, "answers": {},
+        })
+        assert resp.status_code == 422
+
+    def test_rejects_missing_quiz_id(self, client):
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "answers": {"q1": "2"},
+        })
+        assert resp.status_code == 422
+
+    def test_blank_answer_counts_as_wrong(self, client):
+        quiz_id, questions, key = self._start_quiz(client)
+        answers = self._answer_all(key, correct=True)
+        answers[questions[0]["id"]] = ""
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "quiz_id": quiz_id, "answers": answers,
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["n_correct"] == len(questions) - 1
+
+    def test_missing_answers_key_counts_as_wrong(self, client):
+        """A partial submission must not inflate the score."""
+        quiz_id, questions, key = self._start_quiz(client)
+        resp = client.post("/api/v1/learning-path/quiz/grade", json={
+            "quiz_id": quiz_id,
+            "answers": {questions[0]["id"]: key[questions[0]["id"]]},
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["n_correct"] == 1
+
     def test_mastery_delta_is_keyed_and_signed(self, client):
         """The response carries the delta the profile update consumes."""
+        quiz_id, _, key = self._start_quiz(client)
         resp = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": self._QUESTIONS,
-            "answers": {"q1": "2", "q2": "4"},
+            "quiz_id": quiz_id,
+            "answers": self._answer_all(key, correct=True),
             "kp_id": "kp-test",
             "prior_mastery": 0.4,
         })
@@ -646,68 +796,32 @@ class TestQuizGradingEndpoint:
         assert body["mastery_delta"]["kp-test"] > 0
 
     def test_mastery_delta_negative_on_failure(self, client):
+        quiz_id, _, key = self._start_quiz(client)
         resp = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": self._QUESTIONS,
-            "answers": {"q1": "9", "q2": "9"},
+            "quiz_id": quiz_id,
+            "answers": self._answer_all(key, correct=False),
             "kp_id": "kp-test",
             "prior_mastery": 0.8,
         })
         assert resp.json()["mastery_delta"]["kp-test"] < 0
 
-    def test_blank_answer_counts_as_wrong(self, client):
+    def test_per_question_detail_discloses_key_only_after_grading(self, client):
+        """Detail carries the correct answer — safe now the id is spent.
+
+        The learner needs it to review; the single-use id stops it being a
+        retry aid.
+        """
+        quiz_id, questions, key = self._start_quiz(client)
+        answers = self._answer_all(key, correct=True)
+        first_id = questions[0]["id"]
+        answers[first_id] = "__wrong__"
+
         resp = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": self._QUESTIONS,
-            "answers": {"q1": "", "q2": "4"},
-        })
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["n_correct"] == 1
-
-    def test_missing_answers_key_counts_as_wrong(self, client):
-        """A partial submission must not inflate the score."""
-        resp = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": self._QUESTIONS,
-            "answers": {"q1": "2"},  # q2 unanswered
-        })
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["n_correct"] == 1
-
-    def test_harder_questions_yield_higher_mastery(self, client):
-        """IRT weights a correct answer on a hard item more heavily."""
-        def _qs(difficulty):
-            return [dict(q, difficulty=difficulty) for q in self._QUESTIONS]
-
-        easy = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": _qs(1), "answers": {"q1": "2", "q2": "4"},
-        }).json()
-        hard = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": _qs(5), "answers": {"q1": "2", "q2": "4"},
-        }).json()
-
-        assert hard["mastery"] > easy["mastery"]
-
-    def test_rejects_empty_questions(self, client):
-        resp = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": [], "answers": {"q1": "2"},
-        })
-        assert resp.status_code == 422
-
-    def test_rejects_empty_answers(self, client):
-        resp = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": self._QUESTIONS, "answers": {},
-        })
-        assert resp.status_code == 422
-
-    def test_rejects_malformed_questions(self, client):
-        resp = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": [{"no_id": True}], "answers": {"q1": "2"},
-        })
-        assert resp.status_code == 422
-
-    def test_per_question_detail_is_returned(self, client):
-        resp = client.post("/api/v1/learning-path/quiz/grade", json={
-            "questions": self._QUESTIONS,
-            "answers": {"q1": "2", "q2": "9"},
+            "quiz_id": quiz_id, "answers": answers,
         })
         detail = resp.json()["per_question"]
-        assert len(detail) == 2
-        assert [d["correct"] for d in detail] == [True, False]
+        assert len(detail) == len(questions)
+        by_id = {d["id"]: d for d in detail}
+        assert by_id[first_id]["correct"] is False
+        assert by_id[first_id]["correct_answer"] == key[first_id]
+        assert by_id[first_id]["submitted"] == "__wrong__"

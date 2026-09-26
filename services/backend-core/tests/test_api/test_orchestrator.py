@@ -218,3 +218,64 @@ class TestStatusCheckpointerFallback:
         from src.agents.orchestrator.router import _state_from_checkpointer
 
         assert asyncio.run(_state_from_checkpointer("any")) is None
+
+
+class TestStatusDoesNotLeakQuizAnswers:
+    """GET /status must not hand out the quiz answer key.
+
+    The assessment node stores the whole ``AssessmentOutput`` dump in graph
+    state, so ``assessment_result.quiz[*].correct_answer`` travels with it.
+    This endpoint trims its two neighbouring keys (``agent_results``,
+    ``generated_resources``) but used to pass ``assessment`` through raw —
+    which made ``/quiz/generate``'s answer-key hiding bypassable by anyone who
+    knew a ``session_id``, since the same key was reachable from here instead.
+
+    Real HTTP via the ``client`` fixture.  The session is seeded through the
+    same ``memory_ops.short_term`` store the endpoint reads back, mirroring how
+    the orchestrator run populates it.
+    """
+
+    _SESSION = "sess-with-assessment"
+
+    def _seed(self, client, assessment: dict) -> None:
+        import asyncio
+
+        state = {"assessment_result": assessment}
+        asyncio.get_event_loop_policy()
+        # The memory_ops mock exposes ``create_session`` as an AsyncMock, so
+        # seed it synchronously by driving the coroutine.
+        asyncio.run(
+            client.app.state.memory_ops.short_term.create_session(
+                self._SESSION, "u-test", {"orchestrator_state": state}
+            )
+        )
+
+    _ASSESSMENT = {
+        "quiz": [
+            {
+                "id": "q1", "type": "choice", "content": "1+1=?",
+                "options": ["1", "2"], "correct_answer": "2",
+                "knowledge_point_id": "kp-array",
+            },
+        ],
+        "confidence": 0.8,
+    }
+
+    def test_answer_key_is_stripped_from_assessment(self, client):
+        self._seed(client, self._ASSESSMENT)
+
+        resp = client.get(f"/api/v1/orchestrator/status/{self._SESSION}")
+        assert resp.status_code == 200, resp.text
+        quiz = resp.json()["assessment"]["quiz"]
+        assert len(quiz) == 1
+        assert "correct_answer" not in quiz[0], "answer key leaked via /status"
+        # The rest of the question still reaches the client.
+        assert quiz[0]["id"] == "q1"
+        assert quiz[0]["content"] == "1+1=?"
+
+    def test_other_assessment_fields_survive(self, client):
+        """Trimming must be surgical — not a blanket drop of the payload."""
+        self._seed(client, {"quiz": [], "confidence": 0.8})
+        resp = client.get(f"/api/v1/orchestrator/status/{self._SESSION}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["assessment"]["confidence"] == 0.8

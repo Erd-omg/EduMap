@@ -55,6 +55,11 @@ TEST_TARGETS = [
     "tests/test_harness/",
     "tests/test_tools/",
     "tests/test_utils/",
+    # The answer-key invariants (server holds the key, the quiz id is
+    # single-use) are HTTP-level: they only exist once a real request goes
+    # through the real router, so the killing tests live here.
+    "tests/test_api/test_learning_path.py",
+    "tests/test_api/test_orchestrator.py",
     "tests/test_rag/test_chunking.py",
     "tests/test_memory/test_recall_scoring.py",
     "tests/test_memory/test_episodic_embedding.py",
@@ -85,6 +90,7 @@ DEFAULT_TARGETS = [
     "src/agents/assessment/grading.py",
     "src/learning_path/forgetting_eval.py",
     "src/learning_path/forgetting_curve.py",
+    "src/learning_path/quiz_store.py",
     "src/utils/db_pool.py",
     "src/agents/assessment/agent.py",
     "src/resources/provenance.py",
@@ -351,6 +357,23 @@ MUTATIONS: dict[str, list[Mutation]] = {
             "recalled: threshold inverted",
             r"                        recalled=score >= 0\.6,",
             "                        recalled=score < 0.6,",
+        ),
+    ],
+    "src/learning_path/quiz_store.py": [
+        Mutation(
+            "quiz-store: id becomes reusable (consume stops burning)",
+            r"        self\._cache\.put\(quiz_id, _CONSUMED\)\n        return entry",
+            "        return entry",
+        ),
+        Mutation(
+            "quiz-store: consumed entry is served again",
+            r"        if entry is _CONSUMED:\n            logger\.warning\(",
+            "        if False:\n            logger.warning(",
+        ),
+        Mutation(
+            "quiz-store: save reuses a fixed id",
+            r"        quiz_id = str\(uuid\.uuid4\(\)\)",
+            '        quiz_id = "fixed-id"',
         ),
     ],
     "src/learning_path/forgetting_curve.py": [
