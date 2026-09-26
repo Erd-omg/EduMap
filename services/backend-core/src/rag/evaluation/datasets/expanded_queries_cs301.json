@@ -1,0 +1,299 @@
+{
+  "_meta": {
+    "description": "cs301（操作系统）检索评测语料 — 用于检验融合策略结论是否可外推到 cs201 之外的语料",
+    "course_id": "cs301",
+    "course_name": "操作系统",
+    "created_at": "2026-09-27",
+    "n_queries": 40,
+    "source": "machine-drafted, PENDING HUMAN REVIEW",
+    "review_status": "unreviewed",
+    "review_note": "relevant_kp_ids 由机器起草，标注者未运行检索验证。**在人工复核前，引用本语料的任何 MRR/召回数字都是无效的** —— 标注决定指标分子，错误的标注会让结果测的是标注质量而非检索质量。复核方法：逐条确认 relevant_kp_ids 确实是该问题的最佳答案来源，且不含漏标。"
+  },
+  "queries": [
+    {
+      "query": "操作系统的主要功能是什么？",
+      "relevant_kp_ids": [
+        "kp-os-intro"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "操作系统在计算机系统中处于什么位置？",
+      "relevant_kp_ids": [
+        "kp-os-intro"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "进程和线程有什么区别？",
+      "relevant_kp_ids": [
+        "kp-os-process"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "进程有哪些状态？状态之间怎么转换？",
+      "relevant_kp_ids": [
+        "kp-os-process"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "PCB 里存了什么？",
+      "relevant_kp_ids": [
+        "kp-os-process"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "什么是进程调度？",
+      "relevant_kp_ids": [
+        "kp-os-schedule"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "先来先服务和短作业优先哪个好？",
+      "relevant_kp_ids": [
+        "kp-os-schedule"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "时间片轮转法适合什么场景？",
+      "relevant_kp_ids": [
+        "kp-os-schedule"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "多级反馈队列调度是怎么工作的？",
+      "relevant_kp_ids": [
+        "kp-os-schedule"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是临界区？",
+      "relevant_kp_ids": [
+        "kp-os-sync"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "信号量是怎么实现进程互斥的？",
+      "relevant_kp_ids": [
+        "kp-os-sync"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "生产者消费者问题怎么用信号量解决？",
+      "relevant_kp_ids": [
+        "kp-os-sync"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "管程和信号量有什么区别？",
+      "relevant_kp_ids": [
+        "kp-os-sync"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "死锁产生的四个必要条件是什么？",
+      "relevant_kp_ids": [
+        "kp-os-deadlock"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "怎么预防死锁？",
+      "relevant_kp_ids": [
+        "kp-os-deadlock"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "银行家算法是怎么避免死锁的？",
+      "relevant_kp_ids": [
+        "kp-os-deadlock"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "死锁和饥饿有什么区别？",
+      "relevant_kp_ids": [
+        "kp-os-deadlock",
+        "kp-os-sync"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "分页和分段有什么区别？",
+      "relevant_kp_ids": [
+        "kp-os-memory"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "逻辑地址怎么转换成物理地址？",
+      "relevant_kp_ids": [
+        "kp-os-memory"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "段页式存储管理是怎么组织的？",
+      "relevant_kp_ids": [
+        "kp-os-memory"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "什么是虚拟内存？",
+      "relevant_kp_ids": [
+        "kp-os-vmemory"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "页面置换算法有哪些？LRU 是怎么实现的？",
+      "relevant_kp_ids": [
+        "kp-os-vmemory"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "什么是缺页中断？",
+      "relevant_kp_ids": [
+        "kp-os-vmemory"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "抖动是怎么产生的？怎么解决？",
+      "relevant_kp_ids": [
+        "kp-os-vmemory"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "FIFO 置换算法有什么问题？",
+      "relevant_kp_ids": [
+        "kp-os-vmemory"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "文件的物理结构有哪几种？",
+      "relevant_kp_ids": [
+        "kp-os-file"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "索引节点是什么？它解决了什么问题？",
+      "relevant_kp_ids": [
+        "kp-os-file"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "目录的作用是什么？",
+      "relevant_kp_ids": [
+        "kp-os-file"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "磁盘调度算法有哪些？",
+      "relevant_kp_ids": [
+        "kp-os-disk"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "SCAN 和 C-SCAN 有什么区别？",
+      "relevant_kp_ids": [
+        "kp-os-disk"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "最短寻道时间优先有什么缺点？",
+      "relevant_kp_ids": [
+        "kp-os-disk"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "磁盘寻道时间由什么决定？",
+      "relevant_kp_ids": [
+        "kp-os-disk"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "I/O 控制方式有哪几种？",
+      "relevant_kp_ids": [
+        "kp-os-io"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "DMA 和中断方式有什么区别？",
+      "relevant_kp_ids": [
+        "kp-os-io"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "缓冲区的作用是什么？",
+      "relevant_kp_ids": [
+        "kp-os-io"
+      ],
+      "difficulty": "basic"
+    },
+    {
+      "query": "设备分配要考虑哪些问题？",
+      "relevant_kp_ids": [
+        "kp-os-io"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "虚拟内存和内存管理有什么关系？",
+      "relevant_kp_ids": [
+        "kp-os-vmemory",
+        "kp-os-memory"
+      ],
+      "difficulty": "intermediate"
+    },
+    {
+      "query": "进程调度和进程同步有什么联系？",
+      "relevant_kp_ids": [
+        "kp-os-schedule",
+        "kp-os-sync"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "文件系统和磁盘调度是怎么配合的？",
+      "relevant_kp_ids": [
+        "kp-os-file",
+        "kp-os-disk"
+      ],
+      "difficulty": "advanced"
+    },
+    {
+      "query": "为什么需要操作系统来管理 I/O？",
+      "relevant_kp_ids": [
+        "kp-os-io",
+        "kp-os-intro"
+      ],
+      "difficulty": "intermediate"
+    }
+  ]
+}

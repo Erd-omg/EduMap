@@ -659,6 +659,9 @@ async def main():
                         help="Enable cross-encoder reranker (overrides config)")
     parser.add_argument("--expand-query", action="store_true", default=None,
                         help="Enable KG-based query expansion (overrides config)")
+    parser.add_argument("--course", default="cs201",
+                        help=("评测语料所属课程（默认 cs201）。与 run_fusion_ablation.py "
+                              "的 --course 一致；换课程可检验检索/生成指标是否可外推。"))
     args = parser.parse_args()
 
     t_start = time.time()
@@ -694,11 +697,19 @@ async def main():
         logger.info("Running %s dataset benchmark...", dataset_name)
 
         if dataset_name == "expanded":
-            queries = load_expanded_queries()
+            queries = load_expanded_queries(args.course)
         else:
-            queries = load_sample_queries()
+            queries = load_sample_queries(args.course)
 
-        logger.info("Loaded %d queries from %s dataset", len(queries), dataset_name)
+        if not queries:
+            logger.error(
+                "课程 %s 没有 %s 语料 — 跳过（可选课程见 run_fusion_ablation.py --list-courses）",
+                args.course, dataset_name,
+            )
+            continue
+
+        logger.info("Loaded %d queries from %s/%s dataset",
+                    len(queries), args.course, dataset_name)
 
         coverage = await runner.check_kp_coverage(queries)
         logger.info("KP coverage: %d/%d (%.1f%%)",

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 # services/backend-core/src/config.py → parents[3] is the monorepo root.
@@ -92,8 +93,52 @@ class Settings(BaseSettings):
     # 即 score 相对 rrf 的 MRR 高 0.043（相对 +5%）、P@1 高 0.09，且延迟不劣。
     # 与 Bruch et al.（arXiv 2210.11934, ACM TOIS）"调优的加权分数融合优于 RRF"
     # 的结论一致。复现：python scripts/run_fusion_ablation.py --dataset expanded
+    #
+    # ⚠️ **证据边界（重要）**：上述数字全部来自**单一语料** —— `expanded_queries.json`
+    #    的 `_meta.course_id == "cs201"`（数据结构与算法，22 个 KP，含自动生成条目）。
+    #
+    #    2026-09-27 补测 cs301（操作系统，10 KP）：
+    #      cs201 (n=200): score 0.8851 > rrf 0.8370 > minmax 0.8197
+    #      cs301 (n=40) : minmax 0.9875 > score 0.9750 > rrf 0.9542   ← 次序变化
+    #    可确证的结论：**score 的优势不是跨语料普适的**，不存在无条件的默认最优。
+    #    ⚠️ 但 cs301 语料的标注**尚未人工复核**（见其 _meta.review_note），所以
+    #    "minmax 反超"的**具体幅度**属初步结果，可能因标注修正而消失——不要据此改动默认值。
+    #
+    #    因此：**当前默认值是在 cs201 上的选择，不是"最优策略"的声明**。
+    #    换语料前请重跑 `scripts/run_fusion_ablation.py --course <id>`，不要外推。
+    #
+    # 回滚：改这个默认值，或用 `HYBRID_FUSION_METHOD` 环境变量单向覆盖（无需改代码）。
+    # 值必须是 FUSION_METHODS 之一——拼错会在**启动时**报错（或在直接赋值时抛
+    # ValueError），而不是静默退化成 rrf。
     hybrid_fusion_method: str = "score"
     hybrid_rrf_k: int = 60
+
+    @field_validator("hybrid_fusion_method")
+    @classmethod
+    def _validate_fusion_method(cls, value: str) -> str:
+        """Reject unknown fusion strategies at construction time.
+
+        ``RAGRetrievalService._merge_and_rank`` dispatches on this string and
+        falls through to RRF for anything unrecognised.  That fallback is a
+        reasonable *runtime* policy for a programmatic caller, but as a
+        *configuration* behaviour it is dangerous: a typo (``HYBRID_FUSION_METHOD=scoer``)
+        would silently serve RRF, and a benchmark run against that deployment
+        would report numbers attributable to a strategy nobody selected — with
+        nothing in the logs to say so.  Failing loudly here means the mistake
+        surfaces at boot instead of in a results table.
+        """
+        normalised = value.strip().lower()
+        # Single source of truth: the strategies the dispatch actually
+        # implements.  A second hard-coded list here could drift from it.
+        from src.rag.rag_service import FUSION_METHODS
+
+        if normalised not in FUSION_METHODS:
+            raise ValueError(
+                f"hybrid_fusion_method must be one of {FUSION_METHODS}, got {value!r}. "
+                "An unrecognised value used to fall back to 'rrf' silently; "
+                "set it explicitly instead."
+            )
+        return normalised
 
     # ── Query Expansion ─────────────────────────────────────────────────────
     # 默认关闭：图谱查询扩展会额外引入一次图遍历，且在评测集上收益有限，

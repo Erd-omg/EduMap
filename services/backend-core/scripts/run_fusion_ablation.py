@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """Fusion-strategy ablation: RRF vs minmax vs raw-score.
 
-EduMap defaults to RRF (``settings.hybrid_fusion_method``), but the TOIS
-paper (Bruch et al., arXiv 2210.11934) finds tuned weighted fusion generally
-beats RRF — while BGE-M3's own MIRACL numbers show hybrid beating pure dense
-by only +0.2 nDCG@10, i.e. fusion's marginal value can be near zero.  Those
-two facts point in opposite directions, so the honest move is to **measure on
-our own corpus** rather than assume either way.
+EduMap previously defaulted to RRF (``settings.hybrid_fusion_method``) and now
+defaults to ``score`` on this corpus's evidence; the TOIS paper (Bruch et al.,
+arXiv 2210.11934) finds tuned weighted fusion generally beats RRF — while
+BGE-M3's own MIRACL numbers show hybrid beating pure dense by only +0.2
+nDCG@10, i.e. fusion's marginal value can be near zero.  Those two facts point
+in opposite directions, so the honest move is to **measure on our own corpus**
+rather than assume either way.
+
+**Single-corpus caveat:** the result that made ``score`` the default
+(``fusion_ablation_expanded_20260923T130739Z.json``) is ``cs201`` only, and on
+the n=20 sample set ``rrf`` and ``minmax`` tie.  A second corpus (cs301, seeded
+by ``scripts/seed_cs301.py``) changes the ordering — ``minmax`` leads there —
+so **no strategy is unconditionally best**.  Use ``--course`` to re-run against
+another corpus; ``--list-courses`` shows what is available.
+
+The cs301 corpus's labels are machine-drafted and **not yet human-reviewed**
+(see its ``_meta.review_note``), so its specific deltas are preliminary; the
+*ordering instability* is the robust part of the finding.
 
 This script answers one question: *on our labelled query sets, which of the
 three implemented fusion strategies produces the best retrieval quality, and
@@ -30,8 +42,9 @@ Usage
 -----
     cd services/backend-core
     python scripts/run_fusion_ablation.py [--dataset expanded|sample]
-        [--top-k 10] [--k 1,3,5,10] [--methods rrf,minmax,score]
-        [--output benchmark_results]
+        [--course cs201] [--top-k 10] [--k 1,3,5,10]
+        [--methods rrf,minmax,score] [--output benchmark_results]
+    python scripts/run_fusion_ablation.py --list-courses
 """
 
 from __future__ import annotations
@@ -63,6 +76,7 @@ from src.kg.repositories.knowledge_point_repo import (  # noqa: E402
 )
 from src.kg.vector_index import VectorIndex  # noqa: E402
 from src.rag.evaluation.datasets import (  # noqa: E402
+    available_courses,
     load_expanded_queries,
     load_sample_queries,
 )
@@ -221,7 +235,24 @@ async def main() -> int:
         help="参与对比的融合策略，逗号分隔",
     )
     parser.add_argument("--output", default="benchmark_results")
+    parser.add_argument(
+        "--course", default="cs201",
+        help=(
+            "评测语料所属课程。默认 cs201 —— src/config.py 里 score 成为默认值的"
+            "依据只在 cs201 上测过；换课程可检验该结论是否可外推。"
+            "可用 --list-courses 查看磁盘上有哪些语料。"
+        ),
+    )
+    parser.add_argument(
+        "--list-courses", action="store_true",
+        help="列出可用的评测语料后退出",
+    )
     args = parser.parse_args()
+
+    if args.list_courses:
+        courses = available_courses()
+        print("可用评测语料：", ", ".join(courses) if courses else "(无)")
+        return 0
 
     k_values = [int(k) for k in args.k.split(",")]
     methods = [m.strip() for m in args.methods.split(",") if m.strip()]
@@ -231,11 +262,14 @@ async def main() -> int:
         return 1
 
     loader = load_expanded_queries if args.dataset == "expanded" else load_sample_queries
-    queries = loader()
+    queries = loader(args.course)
     if not queries:
-        logger.error("评测集为空 — 检查 datasets/%s_queries.json", args.dataset)
+        logger.error(
+            "评测集为空 — 课程 %s 没有 %s 语料（可用：%s）",
+            args.course, args.dataset, ", ".join(available_courses()) or "(无)",
+        )
         return 1
-    logger.info("加载评测集: %s, %d 条查询", args.dataset, len(queries))
+    logger.info("加载评测集: %s/%s, %d 条查询", args.course, args.dataset, len(queries))
 
     service, pool = build_rag_service()
     logger.info(
@@ -267,6 +301,7 @@ async def main() -> int:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = out_dir / f"fusion_ablation_{args.dataset}_{stamp}.json"
     payload = {
+        "course_id": args.course,
         "dataset": args.dataset,
         "n_queries": len(queries),
         "top_k": args.top_k,
