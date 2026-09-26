@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 _RESOURCE_COLLECTION = "resource_chunks"
 
+# The fusion strategies ``_merge_and_rank`` implements.  Kept here next to the
+# dispatch it describes; ``config.Settings`` validates the same set.
+FUSION_METHODS: tuple[str, ...] = ("rrf", "minmax", "score")
+
 
 def _naive_tokenize(text: str) -> list[str]:
     """轻量切分：ASCII 词按空白分，中文按字符 + 连续 2-gram（jieba 不可用时的兜底）。"""
@@ -69,13 +73,41 @@ class RAGRetrievalService:
         self._rewrite_enabled: bool = False
         # Retrieval-result TTL cache. Bypass with search(..., use_cache=False).
         self._result_cache: TTLLRUCache[str, list[RAGResult]] | None = None
-        # Hybrid fusion strategy: "rrf" (default) | "minmax" | "score"
-        self.fusion_method: str = self.default_fusion_method
+        # Hybrid fusion strategy: one of ``FUSION_METHODS``; see the property
+        # below and the evidence note in src/config.py.
+        self._fusion_method: str = self.default_fusion_method
         self.fusion_k: int = 60  # RRF 常数
 
     # 默认融合策略（子类或 main.py 可覆盖；亦可由 Settings.hybrid_fusion_method 注入）
-    # "score" 是 n=200 实测最优（MRR 0.9002 vs rrf 0.8569）；详见 src/config.py 注释。
+    # "score" 只在 cs201 上实测最优；cs301 上最优变为 minmax——该结论不可外推，
+    # 证据边界与复现方式见 src/config.py 的融合注释。
     default_fusion_method: str = "score"
+
+    # One-shot guard: the unknown-method fallback is per-call, so this keeps
+    # the warning from flooding the log on the query hot path.
+    _warned_unknown_fusion: bool = False
+
+    @property
+    def fusion_method(self) -> str:
+        """The active fusion strategy (``"rrf"`` / ``"minmax"`` / ``"score"``)."""
+        return self._fusion_method
+
+    @fusion_method.setter
+    def fusion_method(self, value: str) -> None:
+        """Reject unknown strategies at assignment, not at query time.
+
+        Three scripts and ``main.py`` set this attribute directly, bypassing
+        ``Settings`` and therefore its validator.  Validating here covers those
+        paths; the dispatch-time fallback in ``_merge_and_rank`` remains only
+        as a last resort for a subclass that overwrites the attribute wholesale
+        (which would shadow this property).
+        """
+        normalised = (value or "").strip().lower()
+        if normalised not in FUSION_METHODS:
+            raise ValueError(
+                f"fusion_method must be one of {FUSION_METHODS}, got {value!r}"
+            )
+        self._fusion_method = normalised
 
     def enable_result_cache(self, maxsize: int = 256, ttl_seconds: float = 300.0) -> None:
         """Turn on memoisation of search results keyed on the normalised query."""
@@ -535,7 +567,21 @@ class RAGRetrievalService:
             return cls._merge_score(results)
         if method == "minmax":
             return cls._merge_minmax(results)
-        # default: RRF
+        if method != "rrf" and not cls._warned_unknown_fusion:
+            # Reachable only if something overwrote the ``fusion_method``
+            # property (a subclass shadowing it, say) — plain assignment goes
+            # through the setter and raises.  RRF is still the right fallback,
+            # but silently serving it would let a measurement be attributed to
+            # a strategy nobody chose.  Warned once per process rather than per
+            # call: this runs once per query, and an unguarded warning would
+            # emit one identical line per request — turning the signal into
+            # noise on exactly the hot path it is meant to protect.
+            cls._warned_unknown_fusion = True
+            logger.warning(
+                "Unknown fusion method %r — falling back to 'rrf'. "
+                "Valid values: %s.",
+                method, FUSION_METHODS,
+            )
         return cls._merge_rrf(results, k=k)
 
     @classmethod

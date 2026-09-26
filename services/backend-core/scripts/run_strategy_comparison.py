@@ -35,6 +35,7 @@ from src.kg.repositories.knowledge_point_repo import (  # noqa: E402
 )
 from src.kg.vector_index import VectorIndex  # noqa: E402
 from src.rag.evaluation.datasets import (  # noqa: E402
+    available_courses,
     load_expanded_queries,
     load_sample_queries,
 )
@@ -148,6 +149,10 @@ async def main() -> int:
         help="评测集：sample(n=20) 或 expanded(n=200)",
     )
     parser.add_argument(
+        "--course", default="cs201",
+        help="评测语料所属课程（默认 cs201）；换课程可检验结论是否可外推",
+    )
+    parser.add_argument(
         "--repeat", type=int, default=1,
         help="重复跑同一评测集的次数（用于测量检索结果缓存的收益）",
     )
@@ -163,11 +168,14 @@ async def main() -> int:
         strategies.remove("rewrite")
 
     loader = load_expanded_queries if args.dataset == "expanded" else load_sample_queries
-    queries = loader()
+    queries = loader(args.course)
     if not queries:
-        logger.error("评测集为空 — 检查 datasets/%s_queries.json", args.dataset)
+        logger.error(
+            "评测集为空 — 课程 %s 没有 %s 语料（可用：%s）",
+            args.course, args.dataset, ", ".join(available_courses()) or "(无)",
+        )
         return 1
-    logger.info("加载评测集: %s, %d 条查询", args.dataset, len(queries))
+    logger.info("加载评测集: %s/%s, %d 条查询", args.course, args.dataset, len(queries))
 
     rag_service, pool = build_rag_service()
 

@@ -56,6 +56,8 @@ TEST_TARGETS = [
     "tests/test_tools/",
     "tests/test_utils/",
     "tests/test_rag/test_chunking.py",
+    "tests/test_rag/test_config.py",
+    "tests/test_rag/test_datasets.py",
     "tests/test_memory/test_recall_scoring.py",
     "tests/test_memory/test_episodic_embedding.py",
     "tests/test_agents/test_irt.py",
@@ -80,6 +82,8 @@ DEFAULT_TARGETS = [
     "src/utils/llm_adapter.py",
     "src/main.py",
     "src/rag/chunking/semantic_chunker.py",
+    "src/rag/rag_service.py",
+    "src/rag/evaluation/datasets/__init__.py",
     "src/memory/recall_scoring.py",
     "src/agents/assessment/irt.py",
     "src/agents/assessment/grading.py",
@@ -239,6 +243,30 @@ MUTATIONS: dict[str, list[Mutation]] = {
             "readiness: circuit breaker block dropped",
             r'        "circuit_breaker": circuit_breaker,',
             '        "circuit_breaker": None,',
+        ),
+    ],
+    "src/rag/rag_service.py": [
+        Mutation(
+            "fusion: assignment guard removed (unknown value accepted)",
+            r"        if normalised not in FUSION_METHODS:\n            raise ValueError\(",
+            "        if False:\n            raise ValueError(",
+        ),
+        Mutation(
+            "fusion: unknown value served without a warning",
+            r'        if method != "rrf" and not cls\._warned_unknown_fusion:',
+            "        if False:",
+        ),
+        Mutation(
+            "fusion: once-guard dropped (warns per call)",
+            r'            cls\._warned_unknown_fusion = True\n            logger\.warning\(',
+            "            logger.warning(",
+        ),
+    ],
+    "src/rag/evaluation/datasets/__init__.py": [
+        Mutation(
+            "courses: filename-only detection (stray files become courses)",
+            r"        course = _course_of\(path\)\n        if course is not None:\n            courses\.add\(course\)",
+            "        courses.add(path.stem.split('_queries_', 1)[1] if '_queries_' in path.stem else DEFAULT_COURSE_ID)",
         ),
     ],
     "src/rag/chunking/semantic_chunker.py": [
