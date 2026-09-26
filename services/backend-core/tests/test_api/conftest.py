@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.prompts import PromptRegistry
+from src.learning_path.quiz_store import QuizStore
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -287,6 +288,10 @@ def _create_test_app(**overrides) -> FastAPI:
         "path_service": path_service,
         "forgetting_service": forgetting_service,
         "anti_gaming_service": anti_gaming_service,
+        # A REAL QuizStore, not a mock: the endpoint's guarantee is that the
+        # answer key lives server-side and the id is single-use, and a mock
+        # would assert nothing about either.
+        "quiz_store": QuizStore(),
         "kp_repo": AsyncMock(),
         "edge_repo": AsyncMock(),
         "mentor_agent": AsyncMock(),
