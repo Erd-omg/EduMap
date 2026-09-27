@@ -661,6 +661,41 @@ class TestCircuitBreakerHalfOpen:
         assert state["open_count"] == 2, "the probe failure is a new trip"
         assert state["seconds_until_retry"] > 0, "must re-arm the full window"
 
+    def test_probe_failure_reopens_even_below_threshold(self) -> None:
+        """The `was_half_open` clause must re-open *on its own*.
+
+        ``test_probe_failure_reopens_immediately`` above does not actually
+        pin this branch.  ``_record_failure`` increments
+        ``_consecutive_failures`` and never clears it when the circuit opens,
+        so by the time a probe fails the counter is already at ``threshold``
+        plus one — the ``>= threshold`` half of the condition fires regardless,
+        and deleting ``was_half_open or`` still passes that test.
+
+        This test removes the confounder: the counter is zeroed *after* the
+        circuit opens, simulating a breaker that was opened by a burst that
+        has since been accounted for.  Only the half-open clause can re-open
+        from here — with a high threshold, nothing else can.
+        """
+        a = self._breaker(threshold=5, recovery=30.0)
+        for _ in range(5):
+            a._record_failure("planner")          # -> open
+        assert a.circuit_breaker_state()["state"] == "open"
+
+        # Drop the stale streak so `>= threshold` cannot mask the branch.
+        a._consecutive_failures = 0
+        a._circuit_open_until = time.monotonic() - 1
+        assert a.circuit_breaker_state()["state"] == "half_open"
+
+        assert a._try_acquire_slot() is True      # the single probe
+        a._record_failure("planner")              # probe fails
+
+        state = a.circuit_breaker_state()
+        assert state["state"] == "open", (
+            "a failed probe must re-open by itself, without the failure "
+            "streak reaching the threshold"
+        )
+        assert state["seconds_until_retry"] > 0, "must re-arm the full window"
+
     def test_probe_failure_while_recovery_window_is_zero(self) -> None:
         """With recovery=0 the breaker re-arms to half-open on the next read."""
         a = self._breaker(threshold=1, recovery=0.0)

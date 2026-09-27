@@ -58,6 +58,7 @@ from src.kg.repositories.knowledge_point_repo import (  # noqa: E402
 )
 from src.kg.vector_index import VectorIndex  # noqa: E402
 from src.rag.evaluation.datasets import (  # noqa: E402
+    available_courses,
     load_expanded_queries,
     load_sample_queries,
 )
@@ -204,6 +205,8 @@ def _print_comparison(off: dict, on: dict, k_values: list[int], model_name: str)
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default="sample", choices=["sample", "expanded"])
+    parser.add_argument("--course", default="cs201",
+                        help="评测语料所属课程（默认 cs201）；换课程可检验结论是否可外推")
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--k", default="1,3,5")
     parser.add_argument("--output", default="benchmark_results")
@@ -215,11 +218,14 @@ async def main() -> int:
 
     k_values = [int(k) for k in args.k.split(",")]
     loader = load_expanded_queries if args.dataset == "expanded" else load_sample_queries
-    queries = loader()
+    queries = loader(args.course)
     if not queries:
-        logger.error("评测集为空")
+        logger.error(
+            "评测集为空 — 课程 %s 没有 %s 语料（可用：%s）",
+            args.course, args.dataset, ", ".join(available_courses()) or "(无)",
+        )
         return 1
-    logger.info("加载评测集: %s, %d 条", args.dataset, len(queries))
+    logger.info("加载评测集: %s/%s, %d 条", args.course, args.dataset, len(queries))
 
     service, pool = build_service()
     model_name = args.model or settings.reranker_model
