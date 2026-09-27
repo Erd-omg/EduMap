@@ -187,3 +187,63 @@ class TestCourseScopesEveryLoader:
             assert re.search(r"loader\(args\.course\)|_queries\(args\.course\)", src), (
                 f"{name} declares --course but never passes it to the loader"
             )
+
+
+class TestReviewWorksheetStaysAligned:
+    """The committed review worksheet must round-trip through a CSV reader.
+
+    A worksheet whose rows have fewer fields than its header silently shifts
+    every column after the gap: the reviewer fills in a cell, and the evidence
+    columns to its right move one position left.  That happened — rows 1 and 2
+    of the first committed worksheet had ``top_rrf``'s content sitting in the
+    ``foreign_hits`` column and ``top_score`` empty, because those were the two
+    rows whose ``never_retrieved`` cell was blank and the blank was swallowed.
+
+    The generator now writes ``-`` for empty cells and self-checks the round
+    trip (``_assert_columns_align``).  This test pins the *committed artifact*,
+    so a hand-edit that reintroduces the shift fails here rather than silently
+    misinforming the next reviewer.
+    """
+
+    _PATH = (
+        __import__("pathlib").Path(__file__).resolve().parents[2]
+        / "docs" / "cs301-review-worksheet.csv"
+    )
+
+    def test_every_row_has_the_same_field_count_as_the_header(self) -> None:
+        import csv
+
+        with open(self._PATH, encoding="utf-8", newline="") as f:
+            rows = list(csv.reader(f))
+
+        assert rows, "worksheet is empty"
+        header, body = rows[0], rows[1:]
+        assert len(header) == 9, f"unexpected header: {header}"
+        assert body, "worksheet has a header but no rows"
+
+        width = len(header)
+        bad = [i for i, r in enumerate(body, 1) if len(r) != width]
+        assert not bad, (
+            f"rows {bad} have a field count != {width} — the columns after the "
+            f"gap are shifted, so every value to their right is mislabelled."
+        )
+
+    def test_fix_is_the_fourth_column_and_never_blank(self) -> None:
+        """The reviewer's verdict must stay in one place and be explicit.
+
+        ``fix`` is what the review is *for*; if it drifts or goes blank the
+        worksheet stops recording a decision.
+        """
+        import csv
+
+        with open(self._PATH, encoding="utf-8", newline="") as f:
+            rows = list(csv.reader(f))
+
+        header, body = rows[0], rows[1:]
+        assert header[3] == "fix", f"column 3 is {header[3]!r}, expected 'fix'"
+
+        blank = [r[0] for r in body if not r[3].strip()]
+        assert not blank, (
+            f"rows {blank} have an empty `fix` — every row must carry a verdict "
+            f"('ok' or a replacement KP list)."
+        )

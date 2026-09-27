@@ -603,8 +603,16 @@ class RAGBenchmarkRunner:
     def save_report(
         self, name: str, coverage: dict, retrieval: dict,
         generation: dict | None, extra: dict | None = None,
+        course_id: str | None = None,
     ) -> str:
-        """Save benchmark report to JSON file."""
+        """Save benchmark report to JSON file.
+
+        ``course_id`` records which corpus the numbers came from.  Without it a
+        ``--course cs301`` run lands on disk indistinguishable from a cs201 run
+        — the filename only encodes the *dataset* (``sample``/``expanded``), not
+        the course — and ``benchmark_results/README.md`` tells readers to trust
+        the ``course_id`` field when attributing a result to a corpus.
+        """
         report = {
             "report_name": name,
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -621,6 +629,7 @@ class RAGBenchmarkRunner:
                 "reranker_model": settings.reranker_model if (self._rag and self._rag._reranker is not None) else None,
                 "expand_query_enabled": self._rag._expand_query_enabled if self._rag else False,
                 "expand_query_max_terms": self._rag._expand_query_max_terms if self._rag else 5,
+                "course_id": course_id,
             },
             "kp_coverage": coverage,
             "retrieval_metrics": {
@@ -741,7 +750,9 @@ async def main():
                             d.get("hit_rate", {}).get("3", 0))
 
         # ── 3. Save report ──────────────────────────────────────
-        path = runner.save_report(dataset_name, coverage, retrieval, generation)
+        path = runner.save_report(
+            dataset_name, coverage, retrieval, generation, course_id=args.course,
+        )
 
         # ── 4. Latency Benchmark (run once, on sample dataset) ───
         if dataset_name == "sample" and not args.no_latency:
@@ -749,7 +760,10 @@ async def main():
             latency = await runner.benchmark_latency(queries, iterations=100)
             runner.print_latency_report(latency)
             extra = {"latency_benchmark": latency}
-            _ = runner.save_report(dataset_name, coverage, retrieval, generation, extra=extra)
+            _ = runner.save_report(
+                dataset_name, coverage, retrieval, generation,
+                extra=extra, course_id=args.course,
+            )
 
         elapsed = time.time() - t_start
         logger.info("Total time so far: %.1fs", elapsed)

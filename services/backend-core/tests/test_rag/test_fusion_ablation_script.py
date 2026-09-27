@@ -114,3 +114,57 @@ class TestEvaluateMethod:
         out = await mod.evaluate_method(service, [], "score", top_k=5, k_values=[1])
         assert out["n_queries"] == 0
         assert out["mrr"] == 0.0
+
+
+class TestBenchmarkReportRecordsItsCorpus:
+    """``run_rag_benchmark.py`` must record which course it measured.
+
+    A third measurement failure mode, same family as the two above: the
+    artifact does not say what produced it.  The script grew a ``--course``
+    flag that changes which corpus is loaded, but the saved report's ``config``
+    block did not carry the course — and the filename only encodes the dataset
+    (``sample``/``expanded``), never the course.  So a cs301 run landed on disk
+    indistinguishable from a cs201 run, while ``benchmark_results/README.md``
+    instructs readers to attribute a result to a corpus by looking at its
+    ``course_id`` field.
+
+    Driven through the real ``save_report``, not a source grep: a grep would
+    pass on a docstring mention while the payload stayed wrong.
+    """
+
+    BENCHMARK = SCRIPTS_DIR / "run_rag_benchmark.py"
+
+    def _runner(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("run_rag_benchmark", self.BENCHMARK)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(mod)
+        runner = mod.RAGBenchmarkRunner.__new__(mod.RAGBenchmarkRunner)
+        runner._rag = None
+        return mod, runner
+
+    def test_saved_report_carries_the_course_it_measured(self, tmp_path) -> None:
+        import json
+
+        mod, runner = self._runner()
+        mod.RESULTS_DIR = tmp_path
+
+        path = runner.save_report(
+            "expanded", {}, {"overall": {}, "by_difficulty": {}}, None,
+            course_id="cs301",
+        )
+
+        assert json.load(open(path))["config"]["course_id"] == "cs301"
+
+    def test_absent_course_is_recorded_as_absent_not_guessed(self, tmp_path) -> None:
+        """Omission must stay visible — defaulting to cs201 would be a lie."""
+        import json
+
+        mod, runner = self._runner()
+        mod.RESULTS_DIR = tmp_path
+
+        path = runner.save_report("expanded", {}, {"overall": {}, "by_difficulty": {}}, None)
+
+        assert json.load(open(path))["config"]["course_id"] is None

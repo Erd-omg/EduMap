@@ -58,10 +58,16 @@ python scripts/review_cs301_corpus.py > docs/cs301-review-worksheet.csv
 | `no` | 行号，复核时按此记录进度 |
 | `query` | 查询文本 |
 | `claimed` | **当前声明的相关 KP（空格分隔）——要判断的就是这一列** |
-| `fix` | **留空，等你填**：改后的 KP 列表（空格分隔），或 `ok` 表示不用改 |
+| `fix` | **复核结论**：改后的 KP 列表（空格分隔），或 `ok` 表示不用改 |
 | `never_retrieved` | 声明了但三种方法都没召回（最可疑，优先看） |
-| `foreign_hits` | 结果里混入的 cs201 知识点（噪声，**不影响 MRR**） |
+| `foreign_hits` | 结果里混入的其他课程知识点（噪声，**不影响 MRR**） |
 | `top_rrf` / `top_minmax` / `top_score` | 各策略实际返回的 top-5，供对照 |
+
+> **空单元格写成 `-`，不是留空。** 这是第一版工作表的教训：多数行的
+> `never_retrieved` 与 `foreign_hits` 都为空，一串连续逗号粘进表格软件后会被
+> 折叠，导致右侧各列**整体左移一位**——当时第 1、2 行就出现了 `top_rrf` 落进
+> `foreign_hits` 列、`top_score` 被吃掉的情况。生成器现在对空值写 `-`，并在
+> 写出前跑一次往返自检（`_assert_columns_align`），列数不符即报错。
 
 ### 复核时对每行回答
 
@@ -73,6 +79,8 @@ python scripts/review_cs301_corpus.py > docs/cs301-review-worksheet.csv
 不是"哪些知识点与之沾边"。
 
 复核完把 CSV 发回，我据此改语料文件并同步 `_meta`（`review_status: "reviewed"`）。
+语料文件与 `_meta` 改完后，**必须重跑消融**（见文末），确认标注修正没有移动指标——
+若指标变了，说明改动的是真结论；若没变，说明原结论不依赖那条标注。
 
 ## 已自动标出的可疑条目（复核时优先看）
 
