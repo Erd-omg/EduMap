@@ -158,15 +158,38 @@ class TestCourseScopesEveryLoader:
     measurement.  This pins the call sites that take a course.
     """
 
-    def test_benchmark_helper_scopes_to_its_course(self) -> None:
-        """``RAGBenchmarkRunner`` already took ``course_id`` — it must use it."""
-        import inspect
+    def test_benchmark_helper_scopes_to_its_course(self, monkeypatch) -> None:
+        """``RAGBenchmarkRunner`` must pass its ``course_id`` to the loader.
 
-        from src.rag.evaluation.benchmark import RAGEvalBenchmark
+        Driven through the real ``run_benchmark`` with the loader patched to
+        record what it was called with — a behavioural assertion, not a source
+        grep.  The previous version of this test string-matched
+        ``inspect.getsource(...)`` for ``"load_sample_queries(course_id"``,
+        which passes for a call that names the right argument while passing the
+        wrong value, and fails on a harmless local rename.
+        """
+        import asyncio
 
-        src = inspect.getsource(RAGEvalBenchmark.run_benchmark)
-        assert "load_sample_queries(course_id" in src, (
-            "run_benchmark must pass its course_id to the loader"
+        from src.rag.evaluation import benchmark as bench_mod
+
+        seen: list[str] = []
+
+        def _record(course_id=None):
+            seen.append(course_id)
+            return []  # empty -> run_benchmark short-circuits to "skipped"
+
+        monkeypatch.setattr(bench_mod, "load_sample_queries", _record, raising=False)
+
+        runner = bench_mod.RAGEvalBenchmark.__new__(bench_mod.RAGEvalBenchmark)
+        runner._rag = None
+        result = asyncio.run(
+            runner.run_benchmark(use_sample_queries=True, course_id="cs301")
+        )
+
+        assert result["status"] == "skipped"
+        assert seen == ["cs301"], (
+            f"run_benchmark loaded queries for {seen!r}, not the course it was "
+            f"given — a cs301 run would score against cs201's labels."
         )
 
     def test_eval_scripts_accept_a_course_flag(self) -> None:
