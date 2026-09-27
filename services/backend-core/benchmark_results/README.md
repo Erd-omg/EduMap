@@ -75,27 +75,32 @@ python3 scripts/run_fusion_ablation.py --dataset expanded --course cs201 --outpu
 python3 scripts/run_fusion_ablation.py --list-courses     # 磁盘上有哪些语料
 ```
 
-**⚠️ 语料复核状态：cs301 的标注未经人工核验，其数字为初步结果。**
+**⚠️ 语料复核状态：cs301 标注已于 2026-09-27 逐条人工复核完毕（`_meta.review_status == "reviewed"`）。**
 
 | 文件 | 语料 | 标注 |
 |---|---|---|
 | `expanded_queries.json` | cs201，22 KP | 人工 + 自动生成（原始） |
-| `expanded_queries_cs301.json` | cs301，10 KP | **机器起草，尚未人工复核** |
+| `expanded_queries_cs301.json` | cs301，10 KP | **人工复核 2026-09-27（40 条全过，改动 1 条）** |
 
-**cs301 那一行是 `unreviewed` 的，读下面结论时请连同这一点一起读。** 标注决定 MRR 的分子
-（`relevant_kp_ids` 错一条，MRR 就跟着动），本题的"反转"完全可能因标注修正而消失或翻转。
-复核方法见该文件 `_meta.review_note`。**在复核完成前，任何依赖 cs301 数字的决策都应推迟。**
+复核改动唯一一条：第 17 条「死锁和饥饿有什么区别？」的 `relevant_kp_ids` 由
+`[kp-os-deadlock, kp-os-sync]` 改为 `[kp-os-deadlock, kp-os-schedule]`——饥饿源于调度策略
+（FCFS/SJF/优先级队列）长期不被选中，与 `kp-os-schedule` 直接对应；`kp-os-sync` 讲的是互斥与
+信号量，与饥饿无关。复核工作表见 `docs/cs301-review-worksheet.csv`，流程见
+`docs/cs301-corpus-review.md`。
 
-同一份代码、同一个会话内实测（cs301 待复核）：
+**复核前后数字完全一致**（同口径重跑，`fusion_ablation_expanded_20260926T173119Z.json` →
+`fusion_ablation_expanded_20260927T124735Z.json`）：三种方法 MRR / P@1 / NDCG@1 **四位小数全等**，
+名次仍为 `minmax > score > rrf`。改动该条标注**未移动任何指标**，故下述结论不再带有"待复核"属性。
+
+同一份代码、同一个会话内实测：
 
 | 语料 | n | rrf | minmax | score | 最优 |
 |---|---|---|---|---|---|
 | cs201（数据结构与算法） | 200 | 0.8370 | 0.8197 | **0.8851** | **score** |
-| cs301（操作系统）⚠️未复核 | 40 | 0.9542 | **0.9875** | 0.9750 | **minmax** |
+| cs301（操作系统） | 40 | 0.9542 | **0.9875** | 0.9750 | **minmax** |
 
-- **已确证的部分**：`score` 的优势**不是跨语料普适的**——cs201 上它领先 `minmax` 0.065，
-  而在另一份语料上两者次序变化。这一点即便 cs301 需修正也成立：**不存在无条件的默认最优**。
-- **待复核的部分**：cs301 上"`minmax` 反超 `score`"的具体幅度，以及 `rrf` 的名次。
+- **已确证**：`score` 的优势**不是跨语料普适的**——cs201 上它领先 `minmax` 0.065，
+  而在 cs301 上次序反转，`minmax` 领先 0.0125。**不存在无条件的默认最优策略。**
 - 因此 `hybrid_fusion_method` 的默认值保留 `score`（cs201 是主课程），但**不再是"最优策略"的
   声明，而是"在 cs201 上的选择"**。`src/config.py` 的注释已同步写明这一边界。
 - **量纲假设被削弱**：当初选 `score` 的理由之一是"按原始分数排序即可"，而 cs301 上

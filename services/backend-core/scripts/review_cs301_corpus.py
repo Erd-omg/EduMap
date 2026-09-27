@@ -3,7 +3,10 @@
 
 Built for the human review that the corpus needs before its numbers may be
 cited: ``relevant_kp_ids`` decides MRR's numerator, and the labels were
-machine-drafted (``_meta.review_status == "unreviewed"``).
+machine-drafted. **The cs301 review was completed on 2026-09-27** (40 rows,
+1 change: ``kp-os-sync`` -> ``kp-os-schedule`` on row 17) — see
+``benchmark_results/README.md``. This script remains for future corpora and
+for re-reviewing cs301 if its labels are ever revised.
 
 For each query it prints the claimed labels, the top-5 returned by each fusion
 method, and two automatic red flags:

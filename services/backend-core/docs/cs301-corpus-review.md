@@ -1,8 +1,9 @@
 # cs301 语料人工复核指南
 
 > 适用文件：`services/backend-core/src/rag/evaluation/datasets/expanded_queries_cs301.json`
-> 当前状态：`_meta.review_status == "unreviewed"`
-> **复核完成前，任何引用该语料 MRR/召回的数字都不得用于决策。**
+> **状态：复核已于 2026-09-27 完成**（`_meta.review_status == "reviewed"`，40 条全过，改动 1 条）。
+> 复核结论与重跑数字见 `benchmark_results/README.md` 的「融合策略消融」一节。
+> 本文保留流程说明，供**以后新增语料或修订标注**时复用。
 
 ## 为什么必须复核
 

@@ -101,8 +101,11 @@ class Settings(BaseSettings):
     #      cs201 (n=200): score 0.8851 > rrf 0.8370 > minmax 0.8197
     #      cs301 (n=40) : minmax 0.9875 > score 0.9750 > rrf 0.9542   ← 次序变化
     #    可确证的结论：**score 的优势不是跨语料普适的**，不存在无条件的默认最优。
-    #    ⚠️ 但 cs301 语料的标注**尚未人工复核**（见其 _meta.review_note），所以
-    #    "minmax 反超"的**具体幅度**属初步结果，可能因标注修正而消失——不要据此改动默认值。
+    #
+    #    cs301 的标注已于 2026-09-27 逐条人工复核完毕（`_meta.review_status ==
+    #    "reviewed"`，40 条改动 1 条）。**复核后重跑，三种方法的 MRR/P@1/NDCG@1
+    #    四位小数全等，名次不变**——即上述次序变化不是标注错误造成的，可以引用。
+    #    复核工作表见 `docs/cs301-review-worksheet.csv`。
     #
     #    因此：**当前默认值是在 cs201 上的选择，不是"最优策略"的声明**。
     #    换语料前请重跑 `scripts/run_fusion_ablation.py --course <id>`，不要外推。

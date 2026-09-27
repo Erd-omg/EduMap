@@ -5,9 +5,10 @@
     "course_name": "操作系统",
     "created_at": "2026-09-27",
     "n_queries": 40,
-    "source": "machine-drafted, PENDING HUMAN REVIEW",
-    "review_status": "unreviewed",
-    "review_note": "relevant_kp_ids 由机器起草，标注者未运行检索验证。**在人工复核前，引用本语料的任何 MRR/召回数字都是无效的** —— 标注决定指标分子，错误的标注会让结果测的是标注质量而非检索质量。复核方法：逐条确认 relevant_kp_ids 确实是该问题的最佳答案来源，且不含漏标。"
+    "source": "machine-drafted, HUMAN-REVIEWED 2026-09-27",
+    "review_status": "reviewed",
+    "reviewed_at": "2026-09-27",
+    "review_note": "已于 2026-09-27 逐条人工复核（40 条全部过目）。复核依据：docs/cs301-review-worksheet.csv 中每条查询的声明标注与实际检索 top-5 并列对照。复核改动 1 条：第 17 条「死锁和饥饿有什么区别？」的 relevant_kp_ids 由 [kp-os-deadlock, kp-os-sync] 改为 [kp-os-deadlock, kp-os-schedule] —— 饥饿源于调度策略（FCFS/SJF/优先级队列）长期不被选中，与 kp-os-schedule 的定义直接对应；kp-os-sync 讲的是互斥与信号量，与饥饿无关。其余 39 条维持机器起草的标注。"
   },
   "queries": [
     {
@@ -126,7 +127,7 @@
       "query": "死锁和饥饿有什么区别？",
       "relevant_kp_ids": [
         "kp-os-deadlock",
-        "kp-os-sync"
+        "kp-os-schedule"
       ],
       "difficulty": "advanced"
     },

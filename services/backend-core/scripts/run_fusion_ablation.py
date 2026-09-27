@@ -16,9 +16,12 @@ by ``scripts/seed_cs301.py``) changes the ordering — ``minmax`` leads there �
 so **no strategy is unconditionally best**.  Use ``--course`` to re-run against
 another corpus; ``--list-courses`` shows what is available.
 
-The cs301 corpus's labels are machine-drafted and **not yet human-reviewed**
-(see its ``_meta.review_note``), so its specific deltas are preliminary; the
-*ordering instability* is the robust part of the finding.
+The cs301 corpus's labels were machine-drafted and then **human-reviewed on
+2026-09-27** (40 rows, one change: ``kp-os-sync`` -> ``kp-os-schedule`` on the
+"死锁和饥饿" row; see its ``_meta.review_status``).  Re-running with the
+corrected labels reproduced every metric to four decimals, so the ordering
+instability is not an artefact of the labels — it is the robust part of the
+finding.
 
 This script answers one question: *on our labelled query sets, which of the
 three implemented fusion strategies produces the best retrieval quality, and
