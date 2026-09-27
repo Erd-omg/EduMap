@@ -39,27 +39,39 @@ issue #3 的诉求正是"结论要有可复现的独立依据"——而未经复
 
 ## 怎么做（工具已备好）
 
+**已生成好一份，可直接用**：`docs/cs301-review-worksheet.csv`。用表格软件打开，
+在 `fix` 列填结论即可。若语料或索引变了，重新生成：
+
 ```bash
 cd services/backend-core
 export no_proxy=localhost,127.0.0.1,::1 NO_PROXY=localhost,127.0.0.1,::1
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
-# 生成工作表：40 条查询 × 声明标注 × 三种融合各自的 top-5 实际召回
-python scripts/review_cs301_corpus.py > /tmp/cs301_review.json
-# 摘要（含结语）走 stderr，JSON 走 stdout
+python scripts/review_cs301_corpus.py > docs/cs301-review-worksheet.csv
 ```
 
-输出每条含 `query` / `claimed` / `by_method`（三策略各自 top-5）/
-`never_retrieved`（声明了但没被任何方法召回）/ `foreign_hits`（混入的 cs201 知识点）。
+### 工作表各列
 
-**逐条读**，对每条回答：
+| 列 | 含义 |
+|---|---|
+| `no` | 行号，复核时按此记录进度 |
+| `query` | 查询文本 |
+| `claimed` | **当前声明的相关 KP（空格分隔）——要判断的就是这一列** |
+| `fix` | **留空，等你填**：改后的 KP 列表（空格分隔），或 `ok` 表示不用改 |
+| `never_retrieved` | 声明了但三种方法都没召回（最可疑，优先看） |
+| `foreign_hits` | 结果里混入的 cs201 知识点（噪声，**不影响 MRR**） |
+| `top_rrf` / `top_minmax` / `top_score` | 各策略实际返回的 top-5，供对照 |
 
-1. `claimed` 里的每个 KP，是否真的应该算相关？→ 不是则**删掉**
+### 复核时对每行回答
+
+1. `claimed` 里的每个 KP，是否真的应该算相关？→ 不是则从列表里**删掉**
 2. 还缺哪些 KP？→ **补上**
-3. `by_method` 里出现的高排名 KP，是否其实也该算相关？（漏标最常见的形态）
+3. `top_*` 里排在高位的 KP，是否其实也该算相关？（漏标最常见的形态）
 
-改完后同步：`_meta.review_status` 改为 `reviewed`，填 `reviewed_by` / `reviewed_at`，
-并在 `benchmark_results/README.md` 的表格里去掉 ⚠️ 标记。
+把结论写进 `fix` 列。**判定标准**是"一个提问的学生，答案应该来自哪几个知识点"，
+不是"哪些知识点与之沾边"。
+
+复核完把 CSV 发回，我据此改语料文件并同步 `_meta`（`review_status: "reviewed"`）。
 
 ## 已自动标出的可疑条目（复核时优先看）
 
