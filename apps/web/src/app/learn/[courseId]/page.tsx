@@ -8,7 +8,8 @@ import { ProgressSlider } from '@/components/knowledge-graph/progress-slider';
 import { ProgressPanel } from '@/components/knowledge-graph/progress-panel';
 import { ResourceViewer } from '@/components/resources/resource-viewer';
 import { QuizViewer, type QuizQuestionData } from '@/components/quiz/quiz-viewer';
-import { QuizResult } from '@/components/quiz/quiz-result';
+import { QuizResult, type GradedQuestionData } from '@/components/quiz/quiz-result';
+import type { QuizGradeResponse } from '@edumap/shared-types';
 import { DemoConsole } from '@/components/knowledge-graph/demo-console';
 import { getUserId } from '@/lib/user-id';
 import { useLearningPathStore } from '@/stores/learning-path-store';
@@ -51,6 +52,11 @@ export default function CoursePage() {
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestionData[]>([]);
   const [quizAnswers, setQuizAnswers] = useState<Record<string, string> | null>(null);
   const [quizScore, setQuizScore] = useState<number>(0);
+  // The server's per-question verdict, returned by /quiz/grade. The result
+  // view renders correctness from this, never from a local comparison.
+  const [quizGraded, setQuizGraded] = useState<GradedQuestionData[]>([]);
+  // Opaque id tying this attempt to the answer key held server-side.
+  const [quizId, setQuizId] = useState<string | null>(null);
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizError, setQuizError] = useState<string | null>(null);
 
@@ -157,61 +163,62 @@ export default function CoursePage() {
       if (!res.ok) throw new Error(`Quiz generation failed: ${res.statusText}`);
       const data = await res.json();
       setQuizQuestions(data.questions || []);
+      // Without this id the attempt cannot be graded — the answer key lives
+      // server-side and is reachable only through it.
+      setQuizId(data.quiz_id ?? null);
+      setQuizGraded([]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : '生成测验失败';
       setQuizError(msg);
       setQuizQuestions([]);
+      setQuizId(null);
     } finally {
       setQuizLoading(false);
     }
   }, [selectedKpId, selectedKpName, selectedKpDescription, selectedKpDifficulty]);
 
   // Handle quiz submit
-  const handleQuizSubmit = useCallback(async (answers: Record<string, string>, localScore: number) => {
+  const handleQuizSubmit = useCallback(async (answers: Record<string, string>) => {
     setQuizAnswers(answers);
 
-    if (!selectedKpId) {
-      setQuizScore(localScore);
+    if (!selectedKpId || !quizId) {
+      setQuizError('评分失败，请重试');
       return;
     }
 
-    // Ask the server to grade. The client's own comparison is kept only as an
-    // immediate fallback: the authoritative score — and the IRT mastery
-    // estimate that drives the learner model — must come from one place, and
-    // that place is the backend. Previously grading existed *only* here, which
-    // meant the mastery model never saw the raw responses it needs (it can
-    // weight a correct answer on a hard item more heavily than on an easy one)
-    // and the score depended on client code.
-    let score = localScore;
+    // The server grades, and only the server can: it holds the answer key for
+    // `quizId` and this component never sees it. There is deliberately no
+    // local fallback score — the client cannot compute one, and writing a
+    // guessed value would feed the learner model a number nothing verified.
+    // That fallback is exactly what made the score self-certified before.
+    let graded: QuizGradeResponse;
     try {
       const res = await fetch(`${API_BASE}/api/v1/learning-path/quiz/grade`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          questions: quizQuestions,
-          answers,
-          kp_id: selectedKpId,
-        }),
+        body: JSON.stringify({ quiz_id: quizId, answers, kp_id: selectedKpId }),
       });
-      if (res.ok) {
-        const graded = await res.json();
-        // Trust the server's score; it is computed from the same answers the
-        // user submitted, against the same answer keys.
-        score = graded.score;
+      if (!res.ok) {
+        // 410 means the quiz expired or was already submitted; either way the
+        // learner needs a fresh one rather than a wrong result.
+        throw new Error(res.status === 410 ? '测验已过期，请重新开始' : '评分失败，请重试');
       }
-    } catch {
-      // Network failure — fall back to the local score rather than blocking
-      // the learner from seeing their result.
+      graded = await res.json();
+    } catch (err) {
+      setQuizError(err instanceof Error ? err.message : '评分失败，请重试');
+      return;
     }
 
-    setQuizScore(score);
-    recordProgress(selectedKpId, 'completed', score);
+    setQuizError(null);
+    setQuizGraded(graded.per_question || []);
+    setQuizScore(graded.score);
+    recordProgress(selectedKpId, 'completed', graded.score);
     fetch(`${API_BASE}/api/v1/learning-path/forgetting/review`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: getUserId(), kp_id: selectedKpId }),
     }).catch(() => {});
-  }, [selectedKpId, recordProgress, quizQuestions]);
+  }, [selectedKpId, recordProgress, quizId]);
 
   // Handle continuing after quiz
   const handleQuizContinue = useCallback(() => {
@@ -366,15 +373,16 @@ export default function CoursePage() {
 
             {/* Quiz panel */}
             {showQuiz ? (
-              quizAnswers !== null ? (
+              quizGraded.length > 0 ? (
                 <QuizResult
                   questions={quizQuestions}
-                  answers={quizAnswers}
+                  graded={quizGraded}
                   score={quizScore}
                   kpName={selectedKpName}
                   onContinue={handleQuizContinue}
                   onRetry={() => {
                     setQuizAnswers(null);
+                    setQuizGraded([]);
                     setQuizQuestions([]);
                     handleStartQuiz();
                   }}

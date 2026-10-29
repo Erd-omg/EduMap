@@ -52,6 +52,40 @@ def _get_short_term(request: Request) -> ShortTermMemory | None:
     return None
 
 
+def _public_assessment(assessment: dict | None) -> dict | None:
+    """Strip answer keys out of an ``AssessmentOutput`` dump.
+
+    The assessment node stores the full ``AssessmentOutput.model_dump()`` in
+    graph state (``graph.py``), so ``assessment_result.quiz[*].correct_answer``
+    rides along.  This endpoint used to pass that whole structure through to
+    the caller — the two neighbouring keys (``agent_results``,
+    ``generated_resources``) were both trimmed, but this one was not, which
+    made ``/quiz/generate``'s answer-key hiding bypassable via any known
+    ``session_id``.  Same projection as ``learning_path.router._public_question``
+    so the two exits cannot drift apart.
+    """
+    if not isinstance(assessment, dict):
+        return assessment
+    quiz = assessment.get("quiz")
+    if not isinstance(quiz, list):
+        return assessment
+    return {
+        **assessment,
+        "quiz": [
+            {
+                "id": q.get("id"),
+                "type": q.get("type"),
+                "content": q.get("content"),
+                "options": q.get("options"),
+                "knowledge_point_id": q.get("knowledge_point_id"),
+            }
+            if isinstance(q, dict)
+            else q
+            for q in quiz
+        ],
+    }
+
+
 # ── Request / Response models ─────────────────────────────────────────
 
 
@@ -233,7 +267,7 @@ async def get_status(session_id: str, request: Request):
             {"type": r.get("type"), "title": r.get("title"), "kp_id": r.get("kp_id")}
             for r in state_dict.get("generated_resources", [])
         ],
-        "assessment": state_dict.get("assessment_result"),
+        "assessment": _public_assessment(state_dict.get("assessment_result")),
     }
 
 
