@@ -67,6 +67,56 @@ n=200 实测（`strategy_comparison_20260921T090049Z.json`）：
 - **rewrite 是负收益**：MRR −0.054（相对 hybrid），延迟 ×60；200/200 改写全部成功。
   因此 `rag_rewrite_enabled` 默认 `False`。**这是如实报告的负结果，未调 prompt 凑数字。**
 
+## 融合策略消融 (`fusion_ablation_*.json`)
+
+```bash
+cd services/backend-core
+python3 scripts/run_fusion_ablation.py --dataset expanded --course cs201 --output benchmark_results
+python3 scripts/run_fusion_ablation.py --list-courses     # 磁盘上有哪些语料
+```
+
+**⚠️ 语料复核状态：cs301 标注已于 2026-09-27 逐条人工复核完毕（`_meta.review_status == "reviewed"`）。**
+
+| 文件 | 语料 | 标注 |
+|---|---|---|
+| `expanded_queries.json` | cs201，22 KP | 人工 + 自动生成（原始） |
+| `expanded_queries_cs301.json` | cs301，10 KP | **人工复核 2026-09-27（40 条全过，改动 1 条）** |
+
+复核改动唯一一条：第 17 条「死锁和饥饿有什么区别？」的 `relevant_kp_ids` 由
+`[kp-os-deadlock, kp-os-sync]` 改为 `[kp-os-deadlock, kp-os-schedule]`——饥饿源于调度策略
+（FCFS/SJF/优先级队列）长期不被选中，与 `kp-os-schedule` 直接对应；`kp-os-sync` 讲的是互斥与
+信号量，与饥饿无关。复核工作表见 `docs/cs301-review-worksheet.csv`，流程见
+`docs/cs301-corpus-review.md`。
+
+**复核前后数字完全一致**（同口径重跑，`fusion_ablation_expanded_20260926T173119Z.json` →
+`fusion_ablation_expanded_20260927T124735Z.json`）：三种方法 MRR / P@1 / NDCG@1 **四位小数全等**，
+名次仍为 `minmax > score > rrf`。改动该条标注**未移动任何指标**，故下述结论不再带有"待复核"属性。
+
+同一份代码、同一个会话内实测：
+
+| 语料 | n | rrf | minmax | score | 最优 |
+|---|---|---|---|---|---|
+| cs201（数据结构与算法） | 200 | 0.8370 | 0.8197 | **0.8851** | **score** |
+| cs301（操作系统） | 40 | 0.9542 | **0.9875** | 0.9750 | **minmax** |
+
+- **已确证**：`score` 的优势**不是跨语料普适的**——cs201 上它领先 `minmax` 0.065，
+  而在 cs301 上次序反转，`minmax` 领先 0.0125。**不存在无条件的默认最优策略。**
+- 因此 `hybrid_fusion_method` 的默认值保留 `score`（cs201 是主课程），但**不再是"最优策略"的
+  声明，而是"在 cs201 上的选择"**。`src/config.py` 的注释已同步写明这一边界。
+- **量纲假设被削弱**：当初选 `score` 的理由之一是"按原始分数排序即可"，而 cs301 上
+  `minmax`（显式做源内归一化）表现更好——与 issue #3 的担忧一致：ChromaDB 相似度
+  （`1 - cosine_distance`）与 Neo4j 离散匹配质量量纲不同。
+
+**语料来源**：cs301 由 `scripts/seed_cs301.py` 播种知识图谱（10 KP）后编写；
+入库需先 `seed_embeddings.py`（注意该脚本默认 compose 主机名，见 `seed_cs301.py` 文档）。
+
+**记录口径**：`cache_bypassed: true`（检索缓存全部绕过）。2026-09-26 起的结果含
+`course_id` 字段，**推断语料请以该字段为准**（文件名不编码课程）；更早的 artifact
+（含做出 `score` 默认决策所依据的 `fusion_ablation_expanded_20260923T130739Z.json`）
+没有该字段，其 `course_id` 只能从当时的单课程事实推定为 cs201。
+早期（2026-09-23）的 `fusion_ablation_expanded_20260923T130739Z.json` 是 cs201、n=200，
+即当初做出 `score` 默认决策所依据的那份。
+
 ## 意图识别评测 (`intent_eval_*.json`)
 
 ```bash

@@ -2,9 +2,19 @@
 
 import type { QuizQuestionData } from './quiz-viewer';
 
+/** One row of the server's grading result (see `QuizGradeResponse`). */
+export interface GradedQuestionData {
+  id: string;
+  correct: boolean;
+  difficulty: number;
+  submitted?: string | null;
+  correct_answer: string;
+}
+
 interface QuizResultProps {
   questions: QuizQuestionData[];
-  answers: Record<string, string>;
+  /** Who said what — from `QuizGradeResponse.per_question`. */
+  graded: GradedQuestionData[];
   score: number;
   kpName: string;
   onContinue: () => void;
@@ -13,16 +23,17 @@ interface QuizResultProps {
 
 export function QuizResult({
   questions,
-  answers,
+  graded,
   score,
   kpName,
   onContinue,
   onRetry,
 }: QuizResultProps) {
-  const correctCount = questions.filter((q) => {
-    const userAns = (answers[q.id] || '').trim().toLowerCase();
-    return userAns === q.correct_answer.trim().toLowerCase();
-  }).length;
+  // Correctness comes from the server's grading, never from comparing here:
+  // this component has no answer key (it is only ever disclosed per-question
+  // inside `graded`, which is the server's own verdict on the same attempt).
+  const correctCount = graded.filter((g) => g.correct).length;
+  const gradedById = new Map(graded.map((g) => [g.id, g]));
 
   const percentage = Math.round(score * 100);
 
@@ -50,7 +61,7 @@ export function QuizResult({
         </div>
         <p className={`mt-2 text-sm font-semibold ${grade.color}`}>{grade.label}</p>
         <p className="text-xs text-text-light mt-1">
-          {correctCount}/{questions.length} 题正确
+          {correctCount}/{graded.length} 题正确
         </p>
       </div>
 
@@ -59,11 +70,12 @@ export function QuizResult({
         知识点：{kpName}
       </p>
 
-      {/* Answer review */}
+      {/* Answer review — every value below is the server's, not a local guess */}
       <div className="space-y-3 mb-5 max-h-48 overflow-y-auto">
         {questions.map((q) => {
-          const userAns = (answers[q.id] || '').trim().toLowerCase();
-          const isCorrect = userAns === q.correct_answer.trim().toLowerCase();
+          const g = gradedById.get(q.id);
+          const isCorrect = g?.correct ?? false;
+          const submitted = g?.submitted;
           return (
             <div
               key={q.id}
@@ -76,11 +88,11 @@ export function QuizResult({
               <p className="text-xs font-medium text-text-primary mb-1">{q.content}</p>
               <div className="flex items-center gap-2 text-xs">
                 <span className={isCorrect ? 'text-green-600' : 'text-red-600'}>
-                  你的答案：{answers[q.id] || '未作答'}
+                  你的答案：{submitted || '未作答'}
                 </span>
-                {!isCorrect && (
+                {!isCorrect && g && (
                   <span className="text-green-600">
-                    · 正确答案：{q.correct_answer}
+                    · 正确答案：{g.correct_answer}
                   </span>
                 )}
               </div>

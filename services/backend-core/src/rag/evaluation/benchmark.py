@@ -67,7 +67,14 @@ class RAGEvalBenchmark:
         """
         # 1. Load or generate test queries
         if use_sample_queries:
-            test_queries = load_sample_queries()
+            # Scoped to ``course_id`` — this method already receives it, and
+            # loading cs201's queries for a cs301 run would score against
+            # labels whose kp- ids never match, yielding 0 for every strategy
+            # while looking like a measurement.  ``None`` means "unspecified",
+            # which is the historical cs201 dataset.
+            from src.rag.evaluation.datasets import DEFAULT_COURSE_ID
+
+            test_queries = load_sample_queries(course_id or DEFAULT_COURSE_ID)
             if n_queries and n_queries < len(test_queries):
                 test_queries = test_queries[:n_queries]
         else:

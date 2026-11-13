@@ -214,6 +214,24 @@ async def get_content_style_suggestion(
 # ── Quiz generation endpoint ─────────────────────────────────────────
 
 
+def _public_question(q) -> dict:
+    """Serialise a quiz question for the client — **without the answer key**.
+
+    Deliberately an explicit projection rather than ``model_dump(exclude=...)``:
+    listing the exposed fields means a field added to ``QuizQuestion`` later is
+    private by default.  The inverse (``exclude={"correct_answer"}``) would
+    publish every future field automatically, which is how the answer key
+    escaped in the first place.
+    """
+    return {
+        "id": q.id,
+        "type": q.type,
+        "content": q.content,
+        "options": q.options,
+        "knowledge_point_id": q.knowledge_point_id,
+    }
+
+
 @router.post("/quiz/generate")
 async def generate_quiz(
     body: dict,
@@ -224,6 +242,11 @@ async def generate_quiz(
     Body::
 
         {"kp_id": "...", "kp_name": "...", "kp_description": "...", "difficulty": 3}
+
+    Returns the questions **without their answers**, plus a ``quiz_id``.  The
+    answer key stays server-side (see :mod:`src.learning_path.quiz_store`);
+    ``POST /quiz/grade`` takes that ``quiz_id`` and the learner's answers, so
+    the score is computed against a key the client never saw.
     """
     from src.agents.assessment.agent import AssessmentAgent
     from src.agents.models import KnowledgeUnit
@@ -231,6 +254,13 @@ async def generate_quiz(
     llm = getattr(request.app.state, "llm_adapter", None)
     if not llm:
         raise HTTPException(status_code=503, detail="LLM not available")
+
+    store = getattr(request.app.state, "quiz_store", None)
+    if store is None:
+        # Fail loudly rather than serve questions we cannot later grade
+        # against: without the store there is no answer key anywhere, and
+        # grading would have to fall back to trusting the client.
+        raise HTTPException(status_code=503, detail="Quiz store not available")
 
     agent = AssessmentAgent(llm_adapter=llm)
     ku = KnowledgeUnit(
@@ -241,9 +271,12 @@ async def generate_quiz(
     )
     result = await agent.run_legacy(knowledge_unit=ku)
 
+    quiz_id = store.save(result.quiz)
+
     return {
         "kp_id": body.get("kp_id"),
-        "questions": [q.model_dump() for q in result.quiz],
+        "quiz_id": quiz_id,
+        "questions": [_public_question(q) for q in result.quiz],
         "confidence": result.confidence,
     }
 
@@ -257,43 +290,49 @@ async def grade_quiz_endpoint(
 
     Body::
 
-        {"questions": [<QuizQuestion>, ...],
+        {"quiz_id": "...",              # from POST /quiz/generate
          "answers": {"q1": "B", "q2": "C"},
-         "kp_id": "...",              # optional
-         "prior_mastery": 0.5}        # optional
+         "prior_mastery": 0.5}          # optional
 
-    Returns the deterministic score plus the IRT-based mastery estimate and the
-    signed ``mastery_delta`` the profile update consumes.
+    Returns the deterministic score, the IRT-based mastery estimate, and
+    per-question detail including the correct answer — which is safe to hand
+    back only *after* grading, because by then the attempt is already scored
+    and the id is spent.
 
-    This exists because grading used to happen **only in the browser**
-    (``quiz-result.tsx`` compared answers client-side), while the backend's
-    ``AssessmentAgent.grade_attempt`` sat unused. That left two problems: the
-    authoritative score depended on client code, and the mastery model — which
-    can weight a correct answer on a hard item more heavily than one on an easy
-    item — never saw the raw responses it needs.
-
-    Submitting raw answers lets the server own both. The client may still
-    compute a score for instant feedback, but the value that drives the learner
-    model now comes from here.
+    The request carries no questions.  It used to: the client sent the whole
+    ``QuizQuestion`` list and the server graded against the answer key found in
+    it, so a client could choose its own keys, answer them, and be certified
+    perfect — and ``POST /progress`` would then record the KP as completed,
+    unlocking its dependents.  The key now comes from the server-side store by
+    ``quiz_id``, which is single-use, so a captured id cannot be replayed for a
+    second attempt either.
     """
     from src.agents.assessment.agent import AssessmentAgent
-    from src.agents.models import QuizQuestion
 
     llm = getattr(request.app.state, "llm_adapter", None)
     if not llm:
         raise HTTPException(status_code=503, detail="LLM not available")
 
-    raw_questions = body.get("questions")
+    store = getattr(request.app.state, "quiz_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Quiz store not available")
+
+    quiz_id = body.get("quiz_id")
     answers = body.get("answers")
-    if not isinstance(raw_questions, list) or not raw_questions:
-        raise HTTPException(status_code=422, detail="`questions` must be a non-empty list")
+    if not isinstance(quiz_id, str) or not quiz_id:
+        raise HTTPException(status_code=422, detail="`quiz_id` must be a non-empty string")
     if not isinstance(answers, dict) or not answers:
         raise HTTPException(status_code=422, detail="`answers` must be a non-empty mapping")
 
-    try:
-        questions = [QuizQuestion(**q) for q in raw_questions]
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid question payload: {exc}") from exc
+    questions = store.consume(quiz_id)
+    if questions is None:
+        # Unknown, expired, or already consumed — all mean "generate a new
+        # quiz".  410 rather than 404 because the resource did exist, and
+        # rather than 422 because the request itself was well-formed.
+        raise HTTPException(
+            status_code=410,
+            detail="Quiz not found or already submitted — generate a new quiz",
+        )
 
     agent = AssessmentAgent(llm_adapter=llm)
     result = await agent.grade_attempt(
@@ -304,6 +343,7 @@ async def grade_quiz_endpoint(
     )
 
     graded = result["graded"]
+    answers_by_id = {str(k): v for k, v in answers.items()}
     return {
         "score": graded.score,
         "n_correct": graded.n_correct,
@@ -312,7 +352,16 @@ async def grade_quiz_endpoint(
         "ability": graded.ability,
         "standard_error": graded.standard_error,
         "mastery_delta": result["mastery_delta"],
-        "per_question": graded.per_question,
+        # The key is safe to disclose now: the attempt is scored and the id is
+        # spent, so a learner can only use this to review, not to retry.
+        "per_question": [
+            {
+                **detail,
+                "submitted": answers_by_id.get(str(detail["id"])),
+                "correct_answer": q.correct_answer,
+            }
+            for detail, q in zip(graded.per_question, questions)
+        ],
     }
 
 

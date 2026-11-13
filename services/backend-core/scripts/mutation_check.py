@@ -55,6 +55,11 @@ TEST_TARGETS = [
     "tests/test_harness/",
     "tests/test_tools/",
     "tests/test_utils/",
+    # The answer-key invariants (server holds the key, the quiz id is
+    # single-use) are HTTP-level: they only exist once a real request goes
+    # through the real router, so the killing tests live here.
+    "tests/test_api/test_learning_path.py",
+    "tests/test_api/test_orchestrator.py",
     "tests/test_rag/test_chunking.py",
     "tests/test_memory/test_recall_scoring.py",
     "tests/test_memory/test_episodic_embedding.py",
@@ -80,11 +85,16 @@ DEFAULT_TARGETS = [
     "src/utils/llm_adapter.py",
     "src/main.py",
     "src/rag/chunking/semantic_chunker.py",
+    # Kept from the fusion-safety branch: these three guards and the course
+    # detection below are the invariants that branch exists to protect.
+    "src/rag/rag_service.py",
+    "src/rag/evaluation/datasets/__init__.py",
     "src/memory/recall_scoring.py",
     "src/agents/assessment/irt.py",
     "src/agents/assessment/grading.py",
     "src/learning_path/forgetting_eval.py",
     "src/learning_path/forgetting_curve.py",
+    "src/learning_path/quiz_store.py",
     "src/utils/db_pool.py",
     "src/agents/assessment/agent.py",
     "src/resources/provenance.py",
@@ -253,6 +263,30 @@ MUTATIONS: dict[str, list[Mutation]] = {
             "        if False:\n            return",
         ),
     ],
+    "src/rag/rag_service.py": [
+        Mutation(
+            "fusion: assignment guard removed (unknown value accepted)",
+            r"        if normalised not in FUSION_METHODS:\n            raise ValueError\(",
+            "        if False:\n            raise ValueError(",
+        ),
+        Mutation(
+            "fusion: unknown value served without a warning",
+            r'        if method != "rrf" and not cls\._warned_unknown_fusion:',
+            "        if False:",
+        ),
+        Mutation(
+            "fusion: once-guard dropped (warns per call)",
+            r'            cls\._warned_unknown_fusion = True\n            logger\.warning\(',
+            "            logger.warning(",
+        ),
+    ],
+    "src/rag/evaluation/datasets/__init__.py": [
+        Mutation(
+            "courses: filename-only detection (stray files become courses)",
+            r"        course = _course_of\(path\)\n        if course is not None:\n            courses\.add\(course\)",
+            "        courses.add(path.stem.split('_queries_', 1)[1] if '_queries_' in path.stem else DEFAULT_COURSE_ID)",
+        ),
+    ],
     "src/tools/registry.py": [
         Mutation(
             "tool: timeout removed",
@@ -351,6 +385,35 @@ MUTATIONS: dict[str, list[Mutation]] = {
             "recalled: threshold inverted",
             r"                        recalled=score >= 0\.6,",
             "                        recalled=score < 0.6,",
+        ),
+    ],
+    "src/learning_path/quiz_store.py": [
+        Mutation(
+            "quiz-store: id becomes reusable (consume stops burning)",
+            r"        self\._cache\.put\(quiz_id, _CONSUMED\)\n        return entry",
+            "        return entry",
+        ),
+        Mutation(
+            "quiz-store: consumed entry is served again",
+            r"        if entry is _CONSUMED:\n            logger\.warning\(",
+            "        if False:\n            logger.warning(",
+        ),
+        Mutation(
+            "quiz-store: save reuses a fixed id",
+            r"        quiz_id = str\(uuid\.uuid4\(\)\)",
+            '        quiz_id = "fixed-id"',
+        ),
+    ],
+    # The store-not-wired guard is an endpoint obligation (fail closed rather
+    # than serve ungradeable questions).  Every such site is mutated, and the
+    # killer test removes the store for both endpoints at once — listing only
+    # one site would prove nothing about the other.
+    "src/learning_path/router.py": [
+        Mutation(
+            "quiz: endpoints serve/grade without a store (no key anywhere)",
+            r'        raise HTTPException\(status_code=503, detail="Quiz store not available"\)',
+            "        pass",
+            expected_count=2,
         ),
     ],
     "src/learning_path/forgetting_curve.py": [

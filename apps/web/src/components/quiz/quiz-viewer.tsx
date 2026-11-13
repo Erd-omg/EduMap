@@ -7,7 +7,6 @@ export interface QuizQuestionData {
   type: 'choice' | 'true_false' | 'fill_blank';
   content: string;
   options: string[] | null;
-  correct_answer: string;
   knowledge_point_id: string;
   /**
    * Author-assigned difficulty on the 1–5 scale, echoed from the backend.
@@ -23,7 +22,7 @@ export interface QuizQuestionData {
 interface QuizViewerProps {
   questions: QuizQuestionData[];
   kpName: string;
-  onSubmit: (answers: Record<string, string>, score: number) => void;
+  onSubmit: (answers: Record<string, string>) => void;
   onSkip: () => void;
   isLoading?: boolean;
 }
@@ -55,15 +54,10 @@ export function QuizViewer({
   };
 
   const handleSubmit = () => {
-    let correct = 0;
-    for (const q of questions) {
-      const userAns = answers[q.id] || '';
-      if (userAns.trim().toLowerCase() === q.correct_answer.trim().toLowerCase()) {
-        correct++;
-      }
-    }
-    const score = questions.length > 0 ? correct / questions.length : 0;
-    onSubmit(answers, score);
+    // The server grades: this component no longer has the answer key, and
+    // must not guess at one. It reports the raw responses and lets the parent
+    // submit them against the `quiz_id` the questions came with.
+    onSubmit(answers);
   };
 
   if (isLoading) {
