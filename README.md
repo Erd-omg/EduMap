@@ -227,7 +227,7 @@ EduMap/
 │   │       ├── benchmark.py          # 基准测试运行器（支持 KG 生成 + 手工标注双数据源）
 │   │       ├── llm_judge.py          # LLM-as-Judge 评测（faithfulness + relevancy）
 │   │       └── datasets/             # 评测数据集（20 条手工标注 + 200 条扩展 + 72 条意图标注）
-│   │── tests/                         # pytest 自动化测试（734 项，含 API 集成测试）
+│   │── tests/                         # pytest 自动化测试（1109 项，含 API 集成测试）
 │   │   ├── conftest.py               # 全局 fixtures
 │   │   ├── mocks/                     # MockLLMAdapter
 │   │   ├── test_rag/                  # RAG 评测/分块/重排序/策略对比测试（204 项）

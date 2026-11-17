@@ -138,6 +138,10 @@ src/rag/chunking/semantic_chunker.py (降级分支)
 - **并行分支的失败语义**：一条分支失败不会中止另一条（LangGraph 会把两条都跑完），失败分支的 LLM 调用已经花掉。
 - **`readiness()` 闭包捕获的是 `main.py` 的模块级 `app`**，因此 `_create_test_app()` 的测试 app 看不到它（conftest 里仍有一个只返回 `{"status":"ok"}` 的桩）。真实契约由 `tests/test_api/test_readiness.py` 直接调 `main.readiness()` 覆盖。
 - **前后端共享类型未校验**：`packages/shared-types` 定义了响应契约，但没有任何测试验证后端响应符合它。目前靠各用例手写断言，字段改名未必被发现。
+- **两条分支各自全绿 ≠ 合起来是绿的（2026-10-30 实测）**。两个修复分支在同一批文件上分叉，普通 `git merge` 对一个过时的变异体模式**不报冲突**，结果静默解开了一条守卫。合入前必须在合并结果上跑一遍真实测试——开 PR 让 CI 跑合并态是最低成本的保证。
+- **`quiz_store` 是进程内状态**（`app.state.quiz_store`，256 条 / 15 分钟）。`Dockerfile` 与 compose 都是单 worker，因此正确；一旦加 `--workers > 1`，generate 与 grade 可能落在不同进程，**正确的作答也会 410**。同样受影响的还有 `_sse_queues` / `_tasks`（`/cancel` 的 409 分支就是承认这一点）。加 worker 前必须先换到共享存储，或加显式拒绝。
+- **`run_fusion_ablation.py` 在 e76af97 上无参数运行会崩**（调用不存在的 `loader()`）；带 `--course`/`--list-courses` 参数时不会。随 PR #5 保留在树中，尚未修复。
+- **变异目录 2026-11-13 状态**：53 个变异体中 43 杀死、5 幸存、2 个失效正则（`retention.py`）。幸存明细与判断写在 issue #6；`llm_adapter` 的 half-open 幸存者已由 `684e27b` 解决。
 
 ## 历史修复（不要回退这些不变量）
 
