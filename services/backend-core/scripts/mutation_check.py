@@ -70,6 +70,7 @@ TEST_TARGETS = [
     "tests/test_agents/test_retention.py",
     "tests/test_learning_path/test_forgetting_eval.py",
     "tests/test_learning_path/test_forgetting_curve.py",
+    "tests/test_learning_path/test_path_service.py",
     "tests/test_learning_path/test_review_log.py",
     "tests/test_resources/",
 ]
@@ -95,6 +96,7 @@ DEFAULT_TARGETS = [
     "src/learning_path/forgetting_eval.py",
     "src/learning_path/forgetting_curve.py",
     "src/learning_path/quiz_store.py",
+    "src/learning_path/path_service.py",
     "src/utils/db_pool.py",
     "src/agents/assessment/agent.py",
     "src/resources/provenance.py",
@@ -414,6 +416,31 @@ MUTATIONS: dict[str, list[Mutation]] = {
             r'        raise HTTPException\(status_code=503, detail="Quiz store not available"\)',
             "        pass",
             expected_count=2,
+        ),
+    ],
+    # The killer tests remove the persisted row for (user_id, bare kp_id) —
+    # i.e. only a write under the current key can be found — so each of these
+    # mutants makes the same test fail.
+    "src/learning_path/path_service.py": [
+        Mutation(
+            "progress: course lost when restoring from DB (old bug)",
+            r'                        course_id=self\._course_of\(row\["kp_id"\]\),',
+            '                        course_id="",',
+        ),
+        Mutation(
+            "progress: stored key loses the course prefix",
+            r'        return f"\{course_id\}\{cls\._KP_SEP\}\{kp_id\}"',
+            "        return kp_id",
+        ),
+        Mutation(
+            "progress: key layout inverted (kp::course, self-consistent)",
+            r'        return f"\{course_id\}\{cls\._KP_SEP\}\{kp_id\}"',
+            '        return kp_id + cls._KP_SEP + course_id',
+        ),
+        Mutation(
+            "progress: dedupe ignores the qualified id (duplicate rows)",
+            r"        bare = self\._bare_kp_id\(kp_id\)\n",
+            "        bare = kp_id\n",
         ),
     ],
     "src/learning_path/forgetting_curve.py": [

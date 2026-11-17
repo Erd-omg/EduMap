@@ -74,6 +74,59 @@ class PathService:
         self._progress_loaded: set[str] = set()
         # path_recommendations 建表只需成功执行一次（见 save_recommendation）
         self._reco_table_ready: bool = False
+        # learning_progress 的建表 + 唯一约束也只做一次
+        self._progress_tables_ready: bool = False
+
+    async def _ensure_progress_tables(self) -> None:
+        """Create ``learning_progress`` and its upsert key, once per process.
+
+        ``_save_progress`` upserts on ``ON CONFLICT (user_id, kp_id)``, which
+        Postgres rejects unless a unique constraint on exactly those columns
+        exists.  The table is created here (it is not in
+        ``scripts/db/init/01-schema.sql``), so an environment whose table
+        predates the constraint — and every fresh environment without it —
+        fails the upsert on *every* write; the failure was swallowed at
+        ``debug`` level, so progress vanished on restart with no trace.  A
+        failure here is surfaced by ``_save_progress`` on the next write.
+        """
+        if self._progress_tables_ready or self._db_pool is None:
+            return
+        try:
+            async with self._db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS learning_progress (
+                        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+                        user_id VARCHAR(255) NOT NULL,
+                        kp_id VARCHAR(255) NOT NULL,
+                        status VARCHAR(20) DEFAULT 'not_started',
+                        score DOUBLE PRECISION,
+                        time_spent_minutes INTEGER DEFAULT 0,
+                        metadata JSONB DEFAULT '{}',
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                    """
+                )
+                await conn.execute(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint
+                            WHERE conrelid = 'learning_progress'::regclass
+                              AND conname = 'learning_progress_user_id_kp_id_key'
+                        ) THEN
+                            ALTER TABLE learning_progress
+                                ADD CONSTRAINT learning_progress_user_id_kp_id_key
+                                UNIQUE (user_id, kp_id);
+                        END IF;
+                    END $$
+                    """
+                )
+            self._progress_tables_ready = True
+        except Exception as exc:
+            logger.warning("Could not prepare learning_progress: %s", exc)
 
     async def _load_progress(self, user_id: str) -> None:
         """Load learning progress from PostgreSQL for a user."""
@@ -82,6 +135,7 @@ class PathService:
 
         self._progress_loaded.add(user_id)
         try:
+            await self._ensure_progress_tables()
             async with self._db_pool.acquire() as conn:
                 rows = await conn.fetch(
                     """
@@ -96,8 +150,13 @@ class PathService:
                 for row in rows:
                     record = ProgressRecord(
                         user_id=row["user_id"],
-                        course_id=row.get("kp_id", "").split("::")[0] if "::" in (row.get("kp_id") or "") else "",
-                        kp_id=row["kp_id"],
+                        # ``learning_progress`` has no course column; the course
+                        # is carried inside ``kp_id`` as ``<course_id>::<kp_id>``.
+                        # Reading the prefix of the bare ``kp_id`` yields an
+                        # empty course, and the path filters by ``course_id`` —
+                        # so every restored record was silently dropped.
+                        course_id=self._course_of(row["kp_id"]),
+                        kp_id=self._bare_kp_id(row["kp_id"]),
                         status=row["status"],
                         quiz_score=row["score"],
                         completed_at=row["updated_at"].isoformat() if row["status"] == "completed" else None,
@@ -113,6 +172,7 @@ class PathService:
         if self._db_pool is None:
             return
 
+        await self._ensure_progress_tables()
         try:
             async with self._db_pool.acquire() as conn:
                 await conn.execute(
@@ -128,7 +188,11 @@ class PathService:
                     user_id, kp_id, status, score,
                 )
         except Exception as exc:
-            logger.debug("Failed to save progress to DB: %s", exc)
+            # Not debug: this is how progress used to vanish without a trace
+            # (every write failed against a table missing the upsert's unique
+            # constraint).  The request still succeeds — the learner keeps
+            # their in-memory path — but an operator must be able to see it.
+            logger.error("Failed to save progress to DB for %s/%s: %s", user_id, kp_id, exc)
 
     _RECO_TABLE_DDL = """
         CREATE TABLE IF NOT EXISTS path_recommendations (
@@ -371,6 +435,39 @@ class PathService:
             estimated_session_min=session_min,
         )
 
+    # ``learning_progress`` has no course column (see scripts/db/init/01-schema.sql),
+    # so the course travels with the kp_id as ``<course_id>::<kp_id>``.  The
+    # in-memory store keeps the two fields apart; only the DB row is flattened.
+    _KP_SEP = "::"
+
+    @classmethod
+    def _storage_kp_id(cls, course_id: str, kp_id: str) -> str:
+        """The ``learning_progress.kp_id`` value for ``(course_id, kp_id)``.
+
+        Idempotent for an already-qualified id, which is what
+        :meth:`get_personalized_path` hands back to ``/progress`` after a quiz.
+        """
+        if cls._KP_SEP in kp_id:
+            return kp_id
+        return f"{course_id}{cls._KP_SEP}{kp_id}"
+
+    @classmethod
+    def _bare_kp_id(cls, kp_id: str) -> str:
+        """``<course_id>::<kp_id>`` → ``<kp_id>``; anything else unchanged."""
+        _, sep, tail = (kp_id or "").partition(cls._KP_SEP)
+        return tail if sep else kp_id
+
+    @classmethod
+    def _course_of(cls, stored_kp_id: str) -> str:
+        """Inverse of :meth:`_storage_kp_id` for a stored row.
+
+        Legacy rows written before the prefix existed have no separator; they
+        are attributed to ``""`` and therefore (not) shown under any course,
+        rather than guessed into one.
+        """
+        head, sep, _ = (stored_kp_id or "").partition(cls._KP_SEP)
+        return head if sep else ""
+
     async def record_progress(
         self,
         user_id: str,
@@ -383,16 +480,20 @@ class PathService:
         if user_id not in self._progress:
             self._progress[user_id] = []
 
-        # Remove old record if exists
+        # Remove old record if exists.  Compare in caller terms: when the
+        # caller passes the qualified id the path handed back, a record cached
+        # under the bare id refers to the same row.
+        bare = self._bare_kp_id(kp_id)
+        stored = self._storage_kp_id(course_id, kp_id)
         self._progress[user_id] = [
             r for r in self._progress[user_id]
-            if not (r.course_id == course_id and r.kp_id == kp_id)
+            if not (r.course_id == course_id and r.kp_id == bare)
         ]
 
         record = ProgressRecord(
             user_id=user_id,
             course_id=course_id,
-            kp_id=kp_id,
+            kp_id=bare,
             status="completed" if status == "completed" else "in_progress",
             quiz_score=quiz_score,
             completed_at=datetime.now(timezone.utc).isoformat() if status == "completed" else None,
@@ -400,7 +501,7 @@ class PathService:
         self._progress[user_id].append(record)
 
         # Persist to DB
-        await self._save_progress(user_id, kp_id, record.status, quiz_score)
+        await self._save_progress(user_id, stored, record.status, quiz_score)
 
         logger.info("Progress recorded: user=%s course=%s kp=%s status=%s", user_id, course_id, kp_id, status)
 

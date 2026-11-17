@@ -478,3 +478,102 @@ class TestRecommendationPersistence:
         svc = PathService(kp_repo, edge_repo)
 
         assert await svc.get_recommendation_history("u1") == []
+
+
+class _ProgressPool:
+    """A fake pool whose ``learning_progress`` rows survive a service restart.
+
+    Only the two statements ``PathService`` issues against progress are
+    modelled: the ``_ensure_progress_tables`` DDL (recorded, not applied) and
+    the ``INSERT ... ON CONFLICT`` upsert, keyed on ``(user_id, kp_id)`` exactly
+    like the real constraint.
+    """
+
+    def __init__(self) -> None:
+        self.rows: dict[tuple[str, str], dict] = {}
+
+    def acquire(self):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _acquire():
+            yield self
+
+        return _acquire()
+
+    async def execute(self, sql: str, *args):
+        if args and "INSERT INTO learning_progress" in sql:
+            user_id, kp_id, status, score = args
+            self.rows[(user_id, kp_id)] = {"status": status, "score": score}
+        return "OK"
+
+    async def fetch(self, sql: str, user_id: str):
+        from datetime import datetime, timezone
+
+        return [
+            {"user_id": u, "kp_id": k, "status": v["status"], "score": v["score"],
+             "time_spent_minutes": 0, "metadata": None,
+             "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc)}
+            for (u, k), v in self.rows.items() if u == user_id
+        ]
+
+
+class TestProgressPersistence:
+    """record_progress → database → fresh process reload — real PathService, fake pool.
+
+    The real PostgreSQL round-trip lives in CI's integration tests; what is
+    pinned here is the pair that decides whether a learner's progress is
+    *found again*: the key written must be the key read, and the course must
+    survive the trip (the path filters records by ``course_id``).  Both were
+    broken: the saver wrote the bare ``kp_id`` while the loader expected a
+    ``<course>::`` prefix it could never see, so every restored record was
+    dropped — and the upsert itself failed on tables without the constraint,
+    logged only at ``debug``.
+    """
+
+    def _service(self, pool) -> PathService:
+        kp_repo, edge_repo = _mock_graph(nodes=[_mk_node("A")], edges=[])
+        return PathService(kp_repo, edge_repo, db_pool=pool)
+
+    @pytest.mark.asyncio
+    async def test_progress_survives_a_restart(self) -> None:
+        pool = _ProgressPool()
+        await self._service(pool).record_progress("u1", "c1", "A", "completed", 0.8)
+
+        # A new process: empty in-memory state, same database.
+        second = self._service(pool)
+        node = next(n for n in (await second.get_personalized_path("c1", "u1")).nodes if n.kp_id == "A")
+        assert node.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_stored_row_carries_the_course(self) -> None:
+        """The DB row is what the loader reads; it must say which course it is."""
+        # The exact layout matters because rows written before this fix are
+        # bare (``A``): only ``<course_id>::<kp_id>`` keeps them distinguishable
+        # from every other course, and a self-consistent but inverted
+        # ``<kp_id>::<course_id>`` would silently swap the two on reload.
+        pool = _ProgressPool()
+        await self._service(pool).record_progress("u1", "c1", "A", "completed", 0.8)
+        assert pool.rows[("u1", "c1::A")]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_qualified_id_is_deduped_and_stored_once(self) -> None:
+        """The frontend posts back ``<course>::<kp_id>``; one attempt, one row."""
+        pool = _ProgressPool()
+        svc = self._service(pool)
+        await svc.record_progress("u1", "c1", "A", "completed", 1.0)
+        await svc.record_progress("u1", "c1", "c1::A", "in_progress", None)
+
+        assert [r.kp_id for r in svc._progress["u1"]] == ["A"]
+        assert sorted(pool.rows) == [("u1", "c1::A")]
+
+    @pytest.mark.asyncio
+    async def test_loaded_course_filter_keeps_other_courses_out(self) -> None:
+        pool = _ProgressPool()
+        await self._service(pool).record_progress("u1", "c1", "A", "completed", 1.0)
+        await self._service(pool).record_progress("u1", "c2", "A", "completed", 1.0)
+
+        second = self._service(pool)
+        node = next(n for n in (await second.get_personalized_path("c1", "u1")).nodes if n.kp_id == "A")
+        assert node.status == "completed"
+        assert sorted(k for (_, k) in pool.rows) == ["c1::A", "c2::A"]
