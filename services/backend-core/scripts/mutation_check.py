@@ -95,6 +95,7 @@ DEFAULT_TARGETS = [
     "src/rag/rag_service.py",
     "src/rag/evaluation/datasets/__init__.py",
     "src/memory/recall_scoring.py",
+    "src/agents/orchestrator/worker_mode.py",
     "src/agents/assessment/irt.py",
     "src/agents/assessment/grading.py",
     "src/learning_path/forgetting_eval.py",
@@ -157,6 +158,26 @@ MUTATIONS: dict[str, list[Mutation]] = {
             "agent_results: merge becomes last-write-wins",
             r"    merged = dict\(left or \{\}\)\n    merged\.update\(right or \{\}\)\n    return merged",
             "    return dict(right or {})",
+        ),
+    ],
+    # The startup check is what keeps a multi-worker deploy and a graph that
+    # never got its agents from serving traffic — both fail at request time,
+    # visibly, only if these two run.  Killer: tests/test_agents/test_worker_mode.py.
+    "src/agents/orchestrator/worker_mode.py": [
+        Mutation(
+            "worker-mode: >1 worker no longer refused",
+            r"        raise RuntimeError\(_REFUSAL\)\n\n    if require_configured:",
+            "        pass\n\n    if require_configured:",
+        ),
+        Mutation(
+            "worker-mode: unconfigured graph allowed to serve",
+            r"        if not is_configured\(\):",
+            "        if False:",
+        ),
+        Mutation(
+            "worker-mode: guard_run never refuses",
+            r"    if isinstance\(workers, int\) and workers > MAX_SUPPORTED_WORKERS:",
+            "    if False:",
         ),
     ],
     "src/agents/orchestrator/graph.py": [
