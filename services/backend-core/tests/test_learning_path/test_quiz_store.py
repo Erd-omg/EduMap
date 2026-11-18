@@ -166,11 +166,10 @@ class TestNoRedisOption:
     """
 
     def test_main_does_not_create_a_store_without_redis(self):
-        import inspect
+        """The Redis wiring itself is pinned by ``test_quiz_store_signature.py``.
 
-        import main as main_module
-
-        lifespan_src = inspect.getsource(main_module.lifespan)
-        assert "redis_client = getattr(app.state, \"redis_client\", None)" in lifespan_src
-        assert "QuizStore(redis_client)" in lifespan_src
-        assert "QuizStore()" not in lifespan_src, "an argument-less QuizStore would be process-local again"
+        It lives in its own file because it constrains ``main.lifespan``, not the
+        store, and because it was first written here with ``import main`` — which
+        passes on a dev machine (the backend dir is on ``sys.path``) and fails in
+        CI (only the repo root is), the "test call pattern ≠ production" trap.
+        """
