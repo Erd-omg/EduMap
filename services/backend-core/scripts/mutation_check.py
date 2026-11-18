@@ -64,6 +64,11 @@ TEST_TARGETS = [
     # without this the "circuit breaker block dropped" mutant can never die.
     "tests/test_api/test_readiness.py",
     "tests/test_rag/test_chunking.py",
+    # The fusion guards (`rag_service.py`) are killed by these two and nothing
+    # else: PR #4 dropped them from the list, which is why 3/3 fused mutants
+    # survived until 2026-11-19.
+    "tests/test_rag/test_config.py",
+    "tests/test_rag/test_datasets.py",
     "tests/test_memory/test_recall_scoring.py",
     "tests/test_memory/test_episodic_embedding.py",
     "tests/test_agents/test_irt.py",
