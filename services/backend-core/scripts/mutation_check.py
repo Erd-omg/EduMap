@@ -69,6 +69,11 @@ TEST_TARGETS = [
     # survived until 2026-11-19.
     "tests/test_rag/test_config.py",
     "tests/test_rag/test_datasets.py",
+    # Guards the measurement scripts themselves (cache bypassed, empty index
+    # refused, saved report records its course).  Absent from this list once,
+    # which is how a later merge deleted these tests without any mutation run
+    # noticing — nothing was executing them.
+    "tests/test_rag/test_fusion_ablation_script.py",
     "tests/test_memory/test_recall_scoring.py",
     "tests/test_memory/test_episodic_embedding.py",
     "tests/test_agents/test_irt.py",
