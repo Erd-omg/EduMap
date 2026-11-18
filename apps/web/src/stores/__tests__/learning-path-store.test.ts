@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import type { PersonalizedPath } from '../learning-path-store'
 import { useLearningPathStore } from '../learning-path-store'
 
-const mockPath = {
+const mockPath: PersonalizedPath = {
   course_id: 'cs201',
   user_id: 'user-1',
   nodes: [

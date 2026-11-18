@@ -35,7 +35,16 @@ const buttonVariants = cva(
 
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {}
+    VariantProps<typeof buttonVariants> {
+  /**
+   * Declared only so the type-checker accepts `<Button asChild>`; the component
+   * renders a <button> and ignores it. For link-as-button, apply
+   * `buttonVariants()` to the element you render instead.
+   * TODO: either implement child-cloning or remove this prop and the test
+   * that renders `asChild` (components/__tests__/ui-primitives.test.tsx).
+   */
+  asChild?: boolean
+}
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, ...props }, ref) => {
