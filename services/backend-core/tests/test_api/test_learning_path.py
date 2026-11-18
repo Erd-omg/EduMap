@@ -852,3 +852,50 @@ class TestQuizGradingEndpoint:
         assert by_id[first_id]["correct"] is False
         assert by_id[first_id]["correct_answer"] == key[first_id]
         assert by_id[first_id]["submitted"] == "__wrong__"
+
+
+class TestProgressSurvivesARestartOverHTTP:
+    """POST /progress → GET path — 真实 HTTP + 真实 PathService（假图谱、假连接池）。
+
+    conftest 的 ``path_service`` 是 AsyncMock：``record_progress`` 无条件成功，
+    这样的测试看不到「写进去、读不出来」。本类换成真实的 ``PathService``。
+
+    真实 PostgreSQL 往返属于集成测试；这里固定的是 HTTP 提交的 ``kp_id``（模型
+    POST 的就是路径给的 ``<course>::<kp_id>``）与 ``PathService`` 存储键一致，
+    以及读回时课程不被丢掉——任一条断掉，进度都会在重启后静默消失（且曾把
+    写失败吞在 debug 级别）。
+    """
+
+    @staticmethod
+    def _real_service(pool):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from src.learning_path.path_service import PathService
+
+        node = SimpleNamespace(id="kp-edge", name="Edge", difficulty=1, description="")
+        kp_repo = AsyncMock()
+        kp_repo.get_course_graph = AsyncMock(return_value=MagicMock(nodes=[node], edges=[]))
+        return PathService(kp_repo, AsyncMock(), db_pool=pool)
+
+    def test_progress_posted_by_the_ui_is_found_after_restart(self, client):
+        from tests.test_learning_path.test_path_service import _ProgressPool
+
+        pool = _ProgressPool()
+        client.app.state.path_service = self._real_service(pool)
+        resp = client.post("/api/v1/learning-path/progress", json={
+            "user_id": "u-http",
+            "course_id": "cs101",
+            "kp_id": "cs101::kp-edge",
+            "status": "completed",
+            "quiz_score": 0.75,
+        })
+        assert resp.status_code == 200, resp.text
+        assert list(pool.rows) == [("u-http", "cs101::kp-edge")]
+
+        # New process: a fresh service over the same pool, read back over HTTP.
+        client.app.state.path_service = self._real_service(pool)
+        path = client.get("/api/v1/learning-path/cs101", params={"user_id": "u-http"})
+        assert path.status_code == 200, path.text
+        node = next(n for n in path.json()["nodes"] if n["kp_id"].endswith("kp-edge"))
+        assert node["status"] == "completed"
