@@ -40,3 +40,40 @@ class TestSampleQueries:
         for q in queries:
             for rid in q["relevant_ids"]:
                 assert rid.startswith("kp-"), f"Invalid ID: {rid}"
+
+
+class TestAvailableCourses:
+    """``available_courses()`` —— 只认真正声明了课程的语料文件。
+
+    真实入口：在 ``_DATASETS_DIR`` 里放文件。守护的 bug：只看文件名的话，
+    `expanded_queries_old.json` 这类归档文件会被当成一门课，`--course old`
+    会对一个不存在的课程跑基准并把数字当作该课程的结论。
+    """
+
+    def _write(self, datasets_dir, name: str, meta: dict) -> None:
+        import json
+
+        (datasets_dir / name).write_text(
+            json.dumps({"_meta": meta, "queries": []}), encoding="utf-8"
+        )
+
+    def test_an_archival_file_is_not_a_course(self, tmp_path, monkeypatch) -> None:
+        from src.rag.evaluation import datasets as ds
+
+        self._write(tmp_path, "expanded_queries.json", {"course_id": "cs201"})
+        self._write(tmp_path, "expanded_queries_cs301.json", {"course_id": "cs301"})
+        # No _meta.course_id and not the historical bare name -> not a course.
+        self._write(tmp_path, "expanded_queries_old.json", {})
+        monkeypatch.setattr(ds, "_DATASETS_DIR", tmp_path)
+
+        assert ds.available_courses() == ["cs201", "cs301"]
+
+    def test_a_declared_course_is_found_even_with_an_unusual_filename(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from src.rag.evaluation import datasets as ds
+
+        self._write(tmp_path, "expanded_queries_archive_v2.json", {"course_id": "cs999"})
+        monkeypatch.setattr(ds, "_DATASETS_DIR", tmp_path)
+
+        assert ds.available_courses() == ["cs999"]
