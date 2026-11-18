@@ -271,7 +271,7 @@ async def generate_quiz(
     )
     result = await agent.run_legacy(knowledge_unit=ku)
 
-    quiz_id = store.save(result.quiz)
+    quiz_id = await store.save(result.quiz)
 
     return {
         "kp_id": body.get("kp_id"),
@@ -324,7 +324,7 @@ async def grade_quiz_endpoint(
     if not isinstance(answers, dict) or not answers:
         raise HTTPException(status_code=422, detail="`answers` must be a non-empty mapping")
 
-    questions = store.consume(quiz_id)
+    questions = await store.consume(quiz_id)
     if questions is None:
         # Unknown, expired, or already consumed — all mean "generate a new
         # quiz".  410 rather than 404 because the resource did exist, and

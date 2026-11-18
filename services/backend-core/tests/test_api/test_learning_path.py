@@ -626,7 +626,11 @@ class TestQuizGradingEndpoint:
         assert quiz_id, "generate must return a quiz_id to grade against"
         questions = body["questions"]
 
-        stored = client.app.state.quiz_store.peek(quiz_id)
+        # The store is async (Redis); the tests are synchronous TestClient
+        # calls, so this one lookup is driven through the async API directly.
+        from src.learning_path.quiz_store import peek_sync
+
+        stored = peek_sync(client.app.state.quiz_store, quiz_id)
         assert stored is not None, "generate must leave the questions in the store"
         return quiz_id, questions, {q.id: q.correct_answer for q in stored}
 
@@ -794,20 +798,18 @@ class TestQuizGradingEndpoint:
         client. A 503 on the *generate* side matters just as much — handing
         out questions that can never be graded strands the learner mid-flow.
         """
-        store = client.app.state.quiz_store
-        del client.app.state.quiz_store
-        try:
-            gen = client.post("/api/v1/learning-path/quiz/generate", json={
-                "kp_id": "kp-array", "kp_name": "数组", "difficulty": 3,
-            })
-            assert gen.status_code == 503, gen.text
+        # "No store" is now the real no-Redis deployment: main.py leaves
+        # app.state.quiz_store unset when the Redis ping failed.
+        client.app.state.quiz_store = None
+        gen = client.post("/api/v1/learning-path/quiz/generate", json={
+            "kp_id": "kp-array", "kp_name": "数组", "difficulty": 3,
+        })
+        assert gen.status_code == 503, gen.text
 
-            grade = client.post("/api/v1/learning-path/quiz/grade", json={
-                "quiz_id": "any-id", "answers": {"q1": "2"},
-            })
-            assert grade.status_code == 503, grade.text
-        finally:
-            client.app.state.quiz_store = store
+        grade = client.post("/api/v1/learning-path/quiz/grade", json={
+            "quiz_id": "any-id", "answers": {"q1": "2"},
+        })
+        assert grade.status_code == 503, grade.text
 
     def test_mastery_delta_is_keyed_and_signed(self, client):
         """The response carries the delta the profile update consumes."""
