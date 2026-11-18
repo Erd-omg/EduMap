@@ -60,6 +60,9 @@ TEST_TARGETS = [
     # through the real router, so the killing tests live here.
     "tests/test_api/test_learning_path.py",
     "tests/test_api/test_orchestrator.py",
+    # Readiness is driven directly (main.readiness()), not via the test app —
+    # without this the "circuit breaker block dropped" mutant can never die.
+    "tests/test_api/test_readiness.py",
     "tests/test_rag/test_chunking.py",
     "tests/test_memory/test_recall_scoring.py",
     "tests/test_memory/test_episodic_embedding.py",
@@ -493,12 +496,12 @@ MUTATIONS: dict[str, list[Mutation]] = {
         ),
         Mutation(
             "retention: quoted JSON timestamp not unquoted",
-            r"""    cleaned = raw\.strip\(\)\.strip\('\"'\)""",
-            "    cleaned = raw.strip()",
+            r"""        cleaned = value\.strip\(\)\.strip\('"'\)""",
+            "        cleaned = value.strip()",
         ),
         Mutation(
             "retention: naive timestamp left unlocalised",
-            r"        parsed = parsed\.replace\(tzinfo=timezone\.utc\)",
+            r"        value = value\.replace\(tzinfo=timezone\.utc\)",
             "        pass",
         ),
     ],

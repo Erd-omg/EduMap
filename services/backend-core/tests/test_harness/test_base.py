@@ -337,3 +337,46 @@ class TestAgentConfig:
         assert config.max_retries == 5
         assert config.enable_memory is True
         assert config.temperature == 0.7
+
+
+class TestCircuitBreakerAttribution:
+    """The agent name must reach the shared adapter's circuit breaker.
+
+    One ``OpenAICompatibleAdapter`` is shared by every agent + Mentor, so the
+    breaker's failure counter is global.  Passing ``self._agent_name`` at the
+    bridge (``base.py``'s ``_cb_record``) is the ONLY thing that makes "which
+    agent tripped the breaker?" answerable — without it the attribution is
+    silently lost and every failure is anonymous.
+
+    Added after a mutation (``_record_failure()`` instead of
+    ``_record_failure(self._agent_name)``) survived: attribution was tested at
+    the adapter level but never across the agent → adapter hop.
+    """
+
+    @pytest.mark.asyncio
+    async def test_failure_is_attributed_to_the_agent_name(self) -> None:
+        TestAgent = _make_agent_cls()
+
+        class FailingAgent(TestAgent):
+            async def run(self, input: AgentInput) -> str:
+                raise RuntimeError("upstream down")
+
+        recorder = MagicMock()
+
+        class RecordingLLM:
+            """Duck-typed as a circuit-breaker-capable adapter."""
+
+            def __init__(self) -> None:
+                self._record_failure = recorder
+                self._last_usage: dict = {}
+
+            def _is_circuit_open(self) -> bool:
+                return False
+
+        agent = FailingAgent(
+            llm_adapter=RecordingLLM(), agent_name="designer",
+        )
+        await agent.execute(AgentInput(task_input="x"))
+
+        recorder.assert_called()
+        recorder.assert_called_with("designer")
