@@ -800,7 +800,8 @@ class TestQuizGradingEndpoint:
         """
         # "No store" is now the real no-Redis deployment: main.py leaves
         # app.state.quiz_store unset when the Redis ping failed.
-        client.app.state.quiz_store = None
+        # Production shape: redis down -> main never sets the attribute.
+        del client.app.state.quiz_store
         gen = client.post("/api/v1/learning-path/quiz/generate", json={
             "kp_id": "kp-array", "kp_name": "数组", "difficulty": 3,
         })

@@ -92,7 +92,13 @@ class TestDeploymentFiles:
 
     def test_neither_file_launches_multiple_workers(self):
         for path in self._files():
-            assert not self._MULTI.search(path.read_text(encoding="utf-8")), f"{path} asks for >1 worker"
+            # Prose is not a launch instruction: lines that merely *point at*
+            # an example's label cannot execute anything.
+            text = "\n".join(
+                line for line in path.read_text(encoding="utf-8").splitlines()
+                if not line.strip().startswith((">", "#"))
+            )
+            assert not self._MULTI.search(text), f"{path} asks for >1 worker"
 
     def test_dockerfile_cmd_is_the_single_worker_form(self):
         text = (BACKEND_ROOT / "Dockerfile").read_text(encoding="utf-8")

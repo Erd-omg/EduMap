@@ -9,6 +9,7 @@ is the integration job in CI.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 
 from src.agents.models import QuizQuestion
@@ -163,7 +164,22 @@ class TestNoRedisOption:
     There is deliberately no in-process fallback: a fallback would silently
     reintroduce the single-process handshake this store exists to remove, and
     would make a multi-worker deployment answer correctly *sometimes*.
+
+    These tests cover the *store* half (no entries after a lost Redis).  The
+    wiring half — "main never attaches a store without Redis" — is in
+    ``test_quiz_store_signature.py``.
     """
+
+    def test_a_lost_redis_means_no_quiz_survives(self):
+        """A restart of Redis is a restart of the quiz state, not a fallback."""
+        async def scenario():
+            redis = new_async_redis()
+            store = QuizStore(redis)
+            quiz_id = await store.save(_questions())
+            await redis.flushall()                 # what a Redis restart does
+            return await store.consume(quiz_id)
+
+        assert asyncio.run(scenario()) is None
 
     def test_main_does_not_create_a_store_without_redis(self):
         """The Redis wiring itself is pinned by ``test_quiz_store_signature.py``.
@@ -173,3 +189,55 @@ class TestNoRedisOption:
         passes on a dev machine (the backend dir is on ``sys.path``) and fails in
         CI (only the repo root is), the "test call pattern ≠ production" trap.
         """
+
+
+class TestReplayIsBounded:
+    """重放不能成为「续命」或刷屏的手段。
+
+    - 每次重放都写一个墓碑，但只用 ``NX``：已存在的墓碑保持旧过期时间，
+      否则客户端只要不停重试，id 就永远不过期。
+    - 同一个 id 的重放日志最多 ``_REPLAY_LOG_LIMIT`` 条，之后静默；
+      计数器本身也带 TTL，不会成为第二份可增长的存储。
+    """
+
+    def test_repeated_replays_do_not_extend_the_tombstone_ttl(self):
+        async def scenario():
+            redis = new_async_redis()
+            store = QuizStore(redis, ttl_seconds=60)
+            quiz_id = await store.save(_questions())
+            await store.consume(quiz_id)
+            key = f"quiz:{quiz_id}"
+
+            await asyncio.sleep(1.1)                 # let the clock advance
+            await store.consume(quiz_id)             # replay re-arms the tombstone
+            rearmed = await redis.ttl(key)
+
+            await asyncio.sleep(1.1)
+            await store.consume(quiz_id)             # and again
+            again = await redis.ttl(key)
+            return rearmed, again
+
+        rearmed, again = asyncio.run(scenario())
+        assert rearmed <= 59, f"re-arm must use the remaining time, got {rearmed}s"
+        assert again < rearmed, "each replay must move the expiry *closer*, never reset it"
+
+    def test_replay_logging_goes_quiet(self, caplog):
+        # Wrap the coroutine, not the store: caplog's handler is thread/context
+        # local and never sees records emitted from a fresh ``asyncio.run`` loop.
+        async def scenario():
+            store = QuizStore(new_async_redis())
+            quiz_id = await store.save(_questions())
+            await store.consume(quiz_id)
+            for _ in range(10):
+                await store.consume(quiz_id)
+
+        # A handler attached on the same thread's loop; caplog's own handler
+        # is context-local and misses records from another ``asyncio.run`` loop.
+        logger = logging.getLogger("src.learning_path.quiz_store")
+        with caplog.at_level("WARNING", logger="src.learning_path.quiz_store"):
+            asyncio.run(scenario())
+        assert logger.propagate, "test requires the logger to propagate to caplog"
+        replayed = [r for r in caplog.records if "replayed" in r.message]
+        assert len(replayed) == 4, (
+            "expected 3 replays + 1 'going quiet' notice; an unbounded loop must not keep logging"
+        )

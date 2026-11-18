@@ -44,7 +44,6 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any
 
 from redis.asyncio import Redis
 
@@ -61,6 +60,9 @@ DEFAULT_TTL_SECONDS = 900
 # entry is a tombstone, not the questions.
 _CONSUMED_MARK = '{"consumed": true}'
 
+# Replay warnings emitted per id before it goes quiet (see _on_replay).
+_REPLAY_LOG_LIMIT = 3
+
 
 class QuizStore:
     """Short-lived, single-use store of quiz questions keyed by an opaque id."""
@@ -75,6 +77,9 @@ class QuizStore:
         self._redis = redis
         self._ttl = ttl_seconds
         self._prefix = key_prefix
+        # Per-process replay counter (mirrors the Redis ``:replays`` key the
+        # first version used); bounded by ``_REPLAY_LOG_LIMIT``.
+        self._replay_counts: dict[str, int] = {}
 
     def _key(self, quiz_id: str) -> str:
         return f"{self._prefix}{quiz_id}"
@@ -111,14 +116,47 @@ class QuizStore:
         """
         raw = await self._redis.getdel(self._key(quiz_id))
         if raw is None:
-            if await self._redis.exists(self._key(quiz_id)):
-                logger.warning("Quiz id %s replayed after being consumed", quiz_id)
             return None
         if raw == _CONSUMED_MARK:
-            logger.warning("Quiz id %s replayed after being consumed", quiz_id)
+            await self._arm_tombstone(self._key(quiz_id))
+            await self._on_replay(quiz_id)
             return None
-        await self._redis.set(self._key(quiz_id), _CONSUMED_MARK, ex=self._ttl)
-        return [QuizQuestion(**item) for item in json.loads(raw)]
+        questions = [QuizQuestion(**item) for item in json.loads(raw)]
+        # Arm only after decoding succeeded: a malformed payload must not burn
+        # the id silently as "consumed".
+        await self._arm_tombstone(self._key(quiz_id))
+        return questions
+
+    async def _arm_tombstone(self, key: str) -> None:
+        """Mark ``key`` consumed for the remaining life of the original entry.
+
+        The TTL is measured from when this tombstone was first written, stored
+        in a side key.  Re-arming (after a replay's ``GETDEL``) rewrites the
+        tombstone with the *remaining* time, never the full TTL — so retrying an
+        id cannot keep it alive past the first consume.
+        """
+        armed = f"{key}:armed"
+        if not await self._redis.exists(armed):
+            await self._redis.set(armed, "1", ex=self._ttl)
+            await self._redis.set(key, _CONSUMED_MARK, ex=self._ttl)
+            return
+        remaining = await self._redis.ttl(armed)
+        await self._redis.set(key, _CONSUMED_MARK, ex=max(int(remaining), 1))
+
+    async def _on_replay(self, quiz_id: str) -> None:
+        """Log a replayed id, at most ``_REPLAY_LOG_LIMIT`` times per id.
+
+        The re-arm in :meth:`_arm_tombstone` uses the remaining TTL, so retries
+        cannot keep the id alive beyond the original window.  The counter here
+        only bounds *log volume*.
+        """
+        self._replay_counts[quiz_id] = self._replay_counts.get(quiz_id, 0) + 1
+        count = self._replay_counts[quiz_id]
+        if count <= _REPLAY_LOG_LIMIT:
+            logger.warning("Quiz id %s replayed after being consumed", quiz_id)
+        elif count == _REPLAY_LOG_LIMIT + 1:
+            logger.warning("Quiz id %s replayed more than %d times; going quiet",
+                           quiz_id, _REPLAY_LOG_LIMIT)
 
     async def peek(self, quiz_id: str) -> list[QuizQuestion] | None:
         """Look up ``quiz_id`` *without* consuming it.
@@ -130,30 +168,6 @@ class QuizStore:
         if raw is None or raw == _CONSUMED_MARK:
             return None
         return [QuizQuestion(**item) for item in json.loads(raw)]
-
-
-class SyncQuizStore:
-    """Blocking facade over :class:`QuizStore` for tests and scripts.
-
-    Runs each operation on a private event loop.  Not for request handlers —
-    they use the async store directly.
-    """
-
-    def __init__(self, redis: Redis, **kwargs: Any) -> None:
-        self._inner = QuizStore(redis, **kwargs)
-
-    @staticmethod
-    def _run(coro: Any) -> Any:
-        return asyncio.run(coro)
-
-    def save(self, questions: list[QuizQuestion]) -> str:
-        return self._run(self._inner.save(questions))
-
-    def consume(self, quiz_id: str) -> list[QuizQuestion] | None:
-        return self._run(self._inner.consume(quiz_id))
-
-    def peek(self, quiz_id: str) -> list[QuizQuestion] | None:
-        return self._run(self._inner.peek(quiz_id))
 
 
 def peek_sync(store: QuizStore, quiz_id: str) -> list[QuizQuestion] | None:
