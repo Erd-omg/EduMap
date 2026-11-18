@@ -83,10 +83,18 @@ async def lifespan(app: FastAPI):
 
     # ── Quiz store (server-side answer keys) ──────────────────────────────
     # Holds generated quiz questions so /quiz/grade can key off a server-side
-    # record instead of trusting questions echoed back by the client.  Purely
-    # in-process (single uvicorn worker), so there is nothing to tear down.
-    from src.learning_path.quiz_store import QuizStore
-    app.state.quiz_store = QuizStore()
+    # record instead of trusting questions echoed back by the client.  Redis-
+    # backed: the generate → grade handshake then survives a request landing on
+    # a different process (the rest of the B work may still be process-local).
+    # Without Redis the store is simply absent and both quiz endpoints answer
+    # 503 — they do not fall back to trusting the client.
+    redis_client = getattr(app.state, "redis_client", None)
+    if redis_client is not None:
+        from src.learning_path.quiz_store import QuizStore
+        app.state.quiz_store = QuizStore(redis_client)
+        logging.info("QuizStore backed by Redis at %s", settings.redis_url)
+    else:
+        logging.warning("Redis unavailable — QuizStore disabled; /quiz/generate and /quiz/grade will answer 503")
 
     # ── Resource Repository (PostgreSQL) ──────────────────────────────────
     from src.resources.repository import ResourceRepository
@@ -184,6 +192,13 @@ async def lifespan(app: FastAPI):
 
     # ── Configure agents + orchestrator graph ───────────────────────────
     _configure_agents(app, pool, llm, checkpointer=checkpointer_holder.saver)
+
+    # Last thing before serving: refuse a process that cannot serve correctly.
+    # Multi-worker deploys split the in-process SSE/cancel state (see
+    # src/agents/orchestrator/worker_mode.py for why this is an error, not a
+    # warning).  Raises out of startup → uvicorn exits with the message.
+    from src.agents.orchestrator.worker_mode import verify_single_worker
+    await verify_single_worker()
 
     yield
     # Close the checkpointer before the pools it depends on: its psycopg pool

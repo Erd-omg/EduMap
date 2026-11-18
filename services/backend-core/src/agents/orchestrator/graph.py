@@ -553,6 +553,30 @@ def graph_has_checkpointer() -> bool:
     return _graph_ctx.checkpointer is not None
 
 
+def is_configured() -> bool:
+    """Whether every agent slot was filled by :func:`configure_graph`.
+
+    The callers inside the graph treat a missing agent as a per-run error
+    ("Agent not configured") and fail that run only.  That is right for tests
+    that want to see an unconfigured graph fail cleanly, but it is wrong at
+    startup: with ``--workers N`` each worker configures its *own* graph, and
+    a worker that silently skipped configuration would keep answering 200
+    while every run failed.  :func:`src.agents.orchestrator.worker_mode.verify_single_worker`
+    uses this to refuse the process at startup instead.
+    """
+    return all(
+        getattr(_graph_ctx, name, None) is not None
+        for name in (
+            "planner",
+            "guardian",
+            "designer",
+            "coder",
+            "content_auditor",
+            "assessment",
+        )
+    )
+
+
 def create_graph() -> StateGraph:
     """Build and return the compiled LangGraph state graph.
 

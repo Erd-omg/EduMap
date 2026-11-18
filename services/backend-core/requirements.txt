@@ -16,6 +16,8 @@ neo4j>=5.20.0
 chromadb>=1.5.0,<1.6.0
 sentence-transformers>=3.0.0
 redis>=5.0.0
+# Tests only: in-memory Redis so worker-safety tests need no live server
+fakeredis>=2.23
 asyncpg>=0.29.0
 numpy>=1.24.0
 celery>=5.4.0

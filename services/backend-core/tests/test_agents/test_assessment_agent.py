@@ -254,3 +254,28 @@ class TestGradeAttempt:
         assert graded.n_correct == 1
         assert graded.n_questions == 2
         assert len(graded.per_question) == 2
+
+
+class TestLlmMasteryIsDiscardedLoudly:
+    """LLM 自报的 ``estimated_mastery_delta`` 必须被丢弃，且留痕。
+
+    现有测试断言它「不进入输出」——这对两版实现都成立：保留字段但
+    ``logger.debug`` 忽略、以及悄悄 ``update`` 到一个不被读取的 dict，
+    输出都一样。区分它们的是**日志**：部署里若 prompt 仍带该字段，
+    运维要能看到「它被忽略了」，而不是以为 LLM 的掌握度被采信了。
+    """
+
+    @pytest.mark.asyncio
+    async def test_ignored_llm_mastery_is_logged(self, caplog) -> None:
+        import logging
+
+        agent = _agent(_QUIZ_JSON)
+        unit = KnowledgeUnit(id="kp1", name="加法", description="d", difficulty=2)
+
+        with caplog.at_level(logging.DEBUG, logger="src.agents.assessment.agent"):
+            await agent.run_legacy(unit)
+
+        assert any(
+            "Ignoring LLM-supplied estimated_mastery_delta" in r.message
+            for r in caplog.records
+        ), "discarding the LLM's mastery guess must be observable, not silent"

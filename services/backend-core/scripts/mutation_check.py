@@ -64,6 +64,11 @@ TEST_TARGETS = [
     # without this the "circuit breaker block dropped" mutant can never die.
     "tests/test_api/test_readiness.py",
     "tests/test_rag/test_chunking.py",
+    # The fusion guards (`rag_service.py`) are killed by these two and nothing
+    # else: PR #4 dropped them from the list, which is why 3/3 fused mutants
+    # survived until 2026-11-19.
+    "tests/test_rag/test_config.py",
+    "tests/test_rag/test_datasets.py",
     "tests/test_memory/test_recall_scoring.py",
     "tests/test_memory/test_episodic_embedding.py",
     "tests/test_agents/test_irt.py",
@@ -74,6 +79,7 @@ TEST_TARGETS = [
     "tests/test_learning_path/test_forgetting_eval.py",
     "tests/test_learning_path/test_forgetting_curve.py",
     "tests/test_learning_path/test_path_service.py",
+    "tests/test_learning_path/test_quiz_store.py",
     "tests/test_learning_path/test_review_log.py",
     "tests/test_resources/",
 ]
@@ -94,6 +100,7 @@ DEFAULT_TARGETS = [
     "src/rag/rag_service.py",
     "src/rag/evaluation/datasets/__init__.py",
     "src/memory/recall_scoring.py",
+    "src/agents/orchestrator/worker_mode.py",
     "src/agents/assessment/irt.py",
     "src/agents/assessment/grading.py",
     "src/learning_path/forgetting_eval.py",
@@ -118,6 +125,11 @@ class Mutation:
     # Only apply if the pattern occurs exactly this many times (guards against
     # mutating an unexpected site after a refactor).  None disables the check.
     expected_count: int | None = 1
+    # True for mutants that are equivalent under the *current test harness*
+    # (e.g. concurrency that an in-process fake cannot interleave).  They are
+    # reported separately and do not fail the run — but the reason must be in
+    # ``name`` or a comment next to the entry, or this turns into an excuse.
+    equivalent: bool = False
 
 
 @dataclass
@@ -151,6 +163,26 @@ MUTATIONS: dict[str, list[Mutation]] = {
             "agent_results: merge becomes last-write-wins",
             r"    merged = dict\(left or \{\}\)\n    merged\.update\(right or \{\}\)\n    return merged",
             "    return dict(right or {})",
+        ),
+    ],
+    # The startup check is what keeps a multi-worker deploy and a graph that
+    # never got its agents from serving traffic — both fail at request time,
+    # visibly, only if these two run.  Killer: tests/test_agents/test_worker_mode.py.
+    "src/agents/orchestrator/worker_mode.py": [
+        Mutation(
+            "worker-mode: >1 worker no longer refused",
+            r"        raise RuntimeError\(_REFUSAL\)\n\n    if require_configured:",
+            "        pass\n\n    if require_configured:",
+        ),
+        Mutation(
+            "worker-mode: unconfigured graph allowed to serve",
+            r"        if not is_configured\(\):",
+            "        if False:",
+        ),
+        Mutation(
+            "worker-mode: guard_run never refuses",
+            r"    if isinstance\(workers, int\) and workers > MAX_SUPPORTED_WORKERS:",
+            "    if False:",
         ),
     ],
     "src/agents/orchestrator/graph.py": [
@@ -393,20 +425,37 @@ MUTATIONS: dict[str, list[Mutation]] = {
         ),
     ],
     "src/learning_path/quiz_store.py": [
+        # Equivalent mutant, kept deliberately: ``get`` instead of ``getdel``
+        # leaves only two observable differences from the real flow — the
+        # payload is not deleted, and a concurrent pair could both read it.
+        # fakeredis is single-threaded, so ``gather`` never interleaves at the
+        # await between them; the delete is covered by the tombstone checks.
+        # (A real Redis integration run would kill it; this directory cannot.)
         Mutation(
-            "quiz-store: id becomes reusable (consume stops burning)",
-            r"        self\._cache\.put\(quiz_id, _CONSUMED\)\n        return entry",
-            "        return entry",
+            "quiz-store: consume uses GET instead of GETDEL [equivalent here]",
+            r"        raw = await self\._redis\.getdel\(self\._key\(quiz_id\)\)",
+            "        raw = await self._redis.get(self._key(quiz_id))",
+            equivalent=True,
         ),
         Mutation(
-            "quiz-store: consumed entry is served again",
-            r"        if entry is _CONSUMED:\n            logger\.warning\(",
-            "        if False:\n            logger.warning(",
+            "quiz-store: no tombstone (replay looks like a typo)",
+            r'        await self\._redis\.set\(self\._key\(quiz_id\), _CONSUMED_MARK, ex=self\._ttl\)\n',
+            "",
         ),
         Mutation(
             "quiz-store: save reuses a fixed id",
             r"        quiz_id = str\(uuid\.uuid4\(\)\)",
             '        quiz_id = "fixed-id"',
+        ),
+        Mutation(
+            "quiz-store: questions stored without TTL (leaked id never expires)",
+            r"        await self\._redis\.set\(self\._key\(quiz_id\), payload, ex=self\._ttl\)",
+            "        await self._redis.set(self._key(quiz_id), payload)",
+        ),
+        Mutation(
+            "quiz-store: tombstone never recognised as consumed",
+            r"if raw == _CONSUMED_MARK:",
+            "if raw == '__never__':",
         ),
     ],
     # The store-not-wired guard is an endpoint obligation (fail closed rather
@@ -695,17 +744,24 @@ def main() -> int:
 
     killed = [r for r in all_results if r.killed]
     survived = [r for r in all_results if not r.killed]
+    equivalent = [r for r in survived if r.mutation.equivalent]
+    real = [r for r in survived if not r.mutation.equivalent]
     print(f"\n{'=' * 62}")
     print(f"killed {len(killed)}/{len(all_results)}  "
-          f"({len(killed) / len(all_results):.0%} mutation score)")
-    if survived:
-        print(f"\nSURVIVORS — these behaviours are not verified by any test:")
-        for r in survived:
+          f"({len(killed) / len(all_results):.0%} mutation score)"
+          + (f"  ·  {len(equivalent)} equivalent (annotated)" if equivalent else ""))
+    if real:
+        print("\nSURVIVORS — these behaviours are not verified by any test:")
+        for r in real:
             print(f"  - {r.file}::{r.mutation.name}")
             if r.detail:
                 for line in r.detail.splitlines():
                     print(f"      {line}")
-    return 1 if survived else 0
+    if equivalent:
+        print("\nEQUIVALENT (annotated, expected to survive here):")
+        for r in equivalent:
+            print(f"  - {r.file}::{r.mutation.name}")
+    return 1 if real else 0
 
 
 if __name__ == "__main__":

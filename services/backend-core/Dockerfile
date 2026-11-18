@@ -35,4 +35,11 @@ USER appuser
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+# edumap:single-worker
+# One worker, deliberately; do not add a multi-worker flag to this CMD.
+# The SSE queues and cancel handles for /orchestrator/generate live in process
+# memory (src/agents/orchestrator/worker_mode.py), so with several workers a
+# cancel or stream reconnect can land on a worker that does not own the run.
+# Vertical scaling (more CPU/RAM) is supported; horizontal scaling needs that
+# state in Redis first. tests/test_agents/test_worker_mode.py pins this line.
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
