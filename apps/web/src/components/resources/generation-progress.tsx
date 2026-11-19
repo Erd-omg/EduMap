@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { API_BASE } from '@/lib/api-base';
 
 /* ── Types ───────────────────────────────────────────────────────── */
 
@@ -98,8 +99,6 @@ export function GenerationProgress({
       setErrorMessage(null);
       return;
     }
-
-    const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
     setOverallStatus('running');
     setErrorMessage(null);
@@ -298,7 +297,6 @@ export function GenerationProgress({
   const handleCancel = useCallback(async () => {
     if (!sessionId || cancelRequestedRef.current) return;
     cancelRequestedRef.current = true;
-    const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
     // Best-effort: tell the backend to hard-cancel the generation. Never
     // block the UI on it — on network failure we still close locally and the
     // backend session TTLs out (or is picked up by the pagehide beacon).

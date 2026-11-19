@@ -188,7 +188,12 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: development
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      # Do NOT point this at localhost: that URL is resolved by the *visitor's*
+      # browser, not by this container. Left unset, the web app targets the
+      # host the page was opened on with port 8000 (see apps/web/src/lib/api-base.ts).
+      # Set it only when the backend lives on another host, e.g.
+      #   NEXT_PUBLIC_API_BASE_URL: http://192.168.1.10:8000
+      NEXT_PUBLIC_API_BASE_BACKEND_PORT: ${BACKEND_PORT:-8000}
     depends_on:
       - backend-core
       - profile-service

@@ -5,7 +5,7 @@ import { ResourceLibrary } from '@/components/resources/resource-library';
 import { GenerationProgress } from '@/components/resources/generation-progress';
 import { getUserId } from '@/lib/user-id';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+import { API_BASE } from '@/lib/api-base';
 const SESSION_STORAGE_KEY = 'edumap-active-generation';
 
 interface CourseItem {

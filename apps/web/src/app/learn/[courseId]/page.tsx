@@ -14,7 +14,7 @@ import { DemoConsole } from '@/components/knowledge-graph/demo-console';
 import { getUserId } from '@/lib/user-id';
 import { useLearningPathStore } from '@/stores/learning-path-store';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+import { API_BASE } from '@/lib/api-base';
 
 interface ResourceItem {
   id: string;

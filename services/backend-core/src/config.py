@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     chroma_host: str = "localhost"
     chroma_port: int = 8003
     redis_url: str = "redis://localhost:6379/0"
+    # Extra CORS origin patterns (comma-separated), appended to the built-in
+    # loopback + private-LAN defaults (see main.py).  Set this only for an
+    # origin the defaults miss (e.g. a public domain behind a reverse proxy).
+    cors_origin_regex: str = ""
+
     llm_api_key: str = ""
     llm_api_base: str = ""
     llm_model: str = "spark"
