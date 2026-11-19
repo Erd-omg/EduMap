@@ -430,12 +430,13 @@ MUTATIONS: dict[str, list[Mutation]] = {
         ),
     ],
     "src/learning_path/quiz_store.py": [
-        # Equivalent mutant, kept deliberately: ``get`` instead of ``getdel``
-        # leaves only two observable differences from the real flow — the
-        # payload is not deleted, and a concurrent pair could both read it.
-        # fakeredis is single-threaded, so ``gather`` never interleaves at the
-        # await between them; the delete is covered by the tombstone checks.
-        # (A real Redis integration run would kill it; this directory cannot.)
+        # Equivalent under this harness, measured on 2026-11-19:
+        # ``_arm_tombstone`` overwrites the payload whether or not ``getdel``
+        # removed it first, so the end state is identical.  The only difference
+        # is atomicity — with ``get`` the answer key survives between the read
+        # and the tombstone write.  fakeredis commands are not coroutines and
+        # never yield, so ``asyncio.gather`` cannot interleave that window
+        # (verified directly).  A real-Redis integration test would kill this.
         Mutation(
             "quiz-store: consume uses GET instead of GETDEL [equivalent here]",
             r"        raw = await self\._redis\.getdel\(self\._key\(quiz_id\)\)",
@@ -444,7 +445,10 @@ MUTATIONS: dict[str, list[Mutation]] = {
         ),
         Mutation(
             "quiz-store: no tombstone (replay looks like a typo)",
-            r'        await self\._redis\.set\(self\._key\(quiz_id\), _CONSUMED_MARK, ex=self\._ttl\)\n',
+            # The tombstone moved into ``_arm_tombstone``; target the
+            # first-arm write there.  Dropping it makes a replay look like an
+            # unknown id, so "replayed" is never logged.
+            r"            await self\._redis\.set\(key, _CONSUMED_MARK, ex=self\._ttl\)\n",
             "",
         ),
         Mutation(
@@ -634,10 +638,20 @@ MUTATIONS: dict[str, list[Mutation]] = {
         ),
     ],
     "src/agents/assessment/agent.py": [
+        # "Accepting" the LLM's guess is no longer expressible: the field was
+        # deleted from ``AssessmentOutput``, so there is nowhere for it to go.
+        # An earlier mutant inserted ``mastery_delta.update(...)`` into a scope
+        # where no such name exists — it died of ``NameError``, a KILLED that
+        # verified nothing.  Mutating ``confidence`` instead also survived,
+        # because the "ignoring" log line still fired.
+        #
+        # What remains, and is what the guard actually protects: the value is
+        # discarded *loudly*.  A prompt that still emits the field must leave an
+        # operator-visible trace rather than being dropped in silence.
         Mutation(
-            "mastery: LLM self-report allowed through again",
+            "mastery: LLM self-report discarded silently",
             r'                if data\.get\("estimated_mastery_delta"\):\n                    logger\.debug\(',
-            '                if data.get("estimated_mastery_delta"):\n                    mastery_delta.update(data["estimated_mastery_delta"])\n                    logger.debug(',
+            '                if False:\n                    logger.debug(',
         ),
         Mutation(
             "questions: difficulty dropped",
