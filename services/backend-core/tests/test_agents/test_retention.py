@@ -21,8 +21,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.agents.orchestrator.retention import (
-    DEFAULT_THREAD_TTL_DAYS,
-    delete_thread,
     is_thread_stale,
     run_retention,
 )
@@ -138,9 +136,20 @@ class TestAsUtc:
         assert got is not None and got.year == 2026
 
     def test_quoted_json_string_parses(self) -> None:
+        """The ``ts`` column is JSON text, so it arrives wrapped in quotes.
+
+        Asserting only ``is not None`` was too weak to notice the quotes not
+        being stripped: the surrounding quotes are part of the value, and a
+        parse that ignored the mismatch would still be a sign the JSONB was
+        read as something other than a JSON scalar.  Pinning the exact instant
+        makes the stripping load-bearing.
+        """
         from src.agents.orchestrator.retention import _as_utc
 
-        assert _as_utc('"2026-09-24T07:18:21.777984+00:00"') is not None
+        got = _as_utc('"2026-09-24T07:18:21.777984+00:00"')
+        assert got == datetime(
+            2026, 9, 24, 7, 18, 21, 777984, tzinfo=timezone.utc,
+        )
 
     def test_unquoted_string_parses(self) -> None:
         from src.agents.orchestrator.retention import _as_utc
@@ -222,3 +231,186 @@ class TestTimestampOrdering:
 
         got = await thread_last_activity(saver)
         assert got["t1"] == moment
+
+
+def _saver_with_threads(
+    activities: dict[str, str | None],
+) -> AsyncMock:
+    """Saver that answers *both* queries ``run_retention`` makes.
+
+    ``list_thread_ids`` and ``thread_last_activity`` each open their own
+    cursor, so a single-row-list fake cannot serve both.  This dispatches on
+    the SQL text: the ``DISTINCT thread_id`` query gets the ids, the
+    ``MAX`` query gets ``(thread_id, quoted-ts)`` rows.
+    """
+    ids_rows = [(tid,) for tid in activities]
+    ts_rows = [
+        (tid, None if ts is None else f'"{ts}"')
+        for tid, ts in activities.items()
+    ]
+
+    class _DispatchingPool:
+        def connection(self):
+            cursor = AsyncMock()
+            # Explicit, so a fetch-before-execute fails loudly instead of
+            # reading an AsyncMock auto-attribute and silently choosing a
+            # dataset.
+            cursor._last_sql = None
+
+            async def _execute(sql, params=None):
+                cursor._last_sql = sql
+
+            async def _fetchall():
+                if cursor._last_sql is None:
+                    raise AssertionError(
+                        "fetchall() before execute() — the fake cannot tell "
+                        "which query to answer"
+                    )
+                return ids_rows if "DISTINCT thread_id" in cursor._last_sql else ts_rows
+
+            cursor.execute = AsyncMock(side_effect=_execute)
+            cursor.fetchall = AsyncMock(side_effect=_fetchall)
+            conn = MagicMock()
+            conn.cursor = MagicMock(return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=cursor),
+                __aexit__=AsyncMock(return_value=None),
+            ))
+            return AsyncMock(
+                __aenter__=AsyncMock(return_value=conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+
+    saver = AsyncMock()
+    saver.conn = _DispatchingPool()
+    saver.adelete_thread = AsyncMock()
+    return saver
+
+
+_OLD = "2020-01-01T00:00:00+00:00"
+_NEW = "2999-01-01T00:00:00+00:00"
+
+
+class TestRunRetention:
+    """``run_retention`` — the module's entry point, previously untested.
+
+    Every other test in this file targets a *helper* (``is_thread_stale``,
+    ``_as_utc``).  That is how two mutation survivors went unnoticed: the
+    deletion loop and the stale-set filter both live in ``run_retention``,
+    which no test called.  A retention job whose delete loop is dead is
+    indistinguishable from a working one while the table grows unbounded —
+    exactly the failure this module exists to prevent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stale_threads_are_actually_deleted(self) -> None:
+        """The loop must call ``adelete_thread`` for each stale thread.
+
+        Survivor was ``if await delete_thread(...)`` -> ``if False:``.
+        """
+        saver = _saver_with_threads({"old-1": _OLD, "old-2": _OLD})
+        report = await run_retention(saver)
+
+        assert report.threads_deleted == 2, report.to_dict()
+        assert report.threads_examined == 2, report.to_dict()
+        deleted = sorted(c.args[0] for c in saver.adelete_thread.await_args_list)
+        assert deleted == ["old-1", "old-2"], (
+            f"stale threads must be deleted, got {deleted}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fresh_threads_are_not_deleted(self) -> None:
+        saver = _saver_with_threads({"new-1": _NEW})
+        report = await run_retention(saver)
+
+        assert report.threads_deleted == 0, report.to_dict()
+        assert report.threads_kept == 1, report.to_dict()
+        saver.adelete_thread.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_only_the_stale_ones_are_deleted(self) -> None:
+        saver = _saver_with_threads(
+            {"old-1": _OLD, "new-1": _NEW, "undatable": None}
+        )
+        report = await run_retention(saver)
+
+        deleted = [c.args[0] for c in saver.adelete_thread.await_args_list]
+        assert deleted == ["old-1"], (
+            f"only the old thread may be deleted; undatable is kept. Got {deleted}"
+        )
+        assert report.to_dict() == {
+            "threads_examined": 3,
+            "threads_deleted": 1,
+            "threads_kept": 2,
+            "errors": 0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_failing_delete_is_counted_not_raised(self) -> None:
+        """One corrupt thread must not abort the pass (module docstring)."""
+        saver = _saver_with_threads({"old-1": _OLD, "old-2": _OLD})
+        saver.adelete_thread = AsyncMock(side_effect=RuntimeError("boom"))
+
+        report = await run_retention(saver)
+
+        assert report.errors == 2, report.to_dict()
+        assert report.threads_deleted == 0, report.to_dict()
+
+    @pytest.mark.asyncio
+    async def test_stale_set_filters_discovery_but_does_not_replace_it(self) -> None:
+        """Passing stale ids must still enumerate threads from the saver.
+
+        Survivor was ``stale = [tid for tid in thread_ids if tid in precomputed]``
+        -> ``stale = list(precomputed)``.  The difference is what happens to an
+        id in the precomputed set that the saver does **not** know about: the
+        filter ignores it, the replacement tries to delete it.  Deleting a
+        thread that was never discovered means acting on an id from somewhere
+        other than the store being cleaned.
+        """
+        saver = _saver_with_threads({"old-1": _OLD, "new-1": _NEW})
+
+        report = await run_retention(
+            saver, stale_thread_ids=["old-1", "ghost-not-in-store"],
+        )
+
+        deleted = [c.args[0] for c in saver.adelete_thread.await_args_list]
+        assert deleted == ["old-1"], (
+            f"stale_thread_ids must filter discovered threads, not replace "
+            f"them — a non-existent id must never be passed to the saver. "
+            f"Got {deleted}"
+        )
+        assert report.threads_examined == 2, (
+            f"discovery must still run; got {report.to_dict()}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_stale_set_means_nothing_stale_not_do_nothing(self) -> None:
+        """``[]`` is a filter that excludes everything — discovery still runs.
+
+        Documented explicitly in the docstring: an earlier version treated the
+        argument as the thread list, so ``[]`` became a silent no-op.
+        """
+        saver = _saver_with_threads({"old-1": _OLD})
+
+        report = await run_retention(saver, stale_thread_ids=[])
+
+        assert report.threads_examined == 1, (
+            f"threads must still be enumerated when the stale set is empty; "
+            f"got {report.to_dict()}"
+        )
+        assert report.threads_deleted == 0
+        saver.adelete_thread.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_listing_failure_is_reported_not_raised(self) -> None:
+        """Retention is housekeeping: it must not break the service."""
+        saver = AsyncMock()
+        saver.conn = None  # list_thread_ids returns [] when there is no pool
+
+        report = await run_retention(None)
+
+        assert report.to_dict() == {
+            "threads_examined": 0,
+            "threads_deleted": 0,
+            "threads_kept": 0,
+            "errors": 0,
+        }

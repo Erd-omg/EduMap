@@ -613,3 +613,149 @@ class TestRetryLoopTerminates:
         types = [r["type"] for r in result["generated_resources"]]
         # 2 branches x 1 resource, from the final round only.
         assert sorted(types) == ["code", "explanation"], types
+
+
+class TestDesignerNodeReturnsOnlyItsOwnDelta:
+    """``designer_node`` must return this round's resources, not the accumulated list.
+
+    ``generated_resources`` carries an append reducer, and ``retry_prep``
+    clears the channel before each retry so that a second round rebuilds the
+    list from the two branch deltas alone.  If ``designer_node`` seeded its
+    local list from ``state["generated_resources"]``, the reducer would append
+    the previous round's resources *again* — every retry would duplicate the
+    whole set.
+
+    Why the existing graph-level tests miss this: ``TestParallelFanOutIsLegal``
+    builds a probe graph with stand-in nodes instead of calling the real one,
+    and ``test_no_resource_duplication_across_retries`` inspects the *final*
+    state — where ``retry_prep``'s clear has already masked an echo.  Both pass
+    with the bug present; measured by mutation (the ``designer: echoes
+    accumulated list`` mutant survived until this test was added).
+    """
+
+    @staticmethod
+    def _designer_with(resources):
+        from src.agents.models import DesignerOutput, GeneratedResource
+        from src.harness.types import ExecutionReport
+
+        class _Designer:
+            async def execute(self, _i):
+                return ExecutionReport(
+                    agent_name="designer", success=True, duration_ms=1.0,
+                    output=DesignerOutput(resources=[
+                        GeneratedResource(
+                            type=r, title="t", content="c", kp_id="kp-1",
+                            difficulty=2,
+                        )
+                        for r in resources
+                    ]),
+                )
+
+        return _Designer()
+
+    @pytest.mark.asyncio
+    async def test_prior_resources_are_not_echoed(self) -> None:
+        from src.agents.models import KnowledgeUnit
+        from src.agents.orchestrator import graph as graph_mod
+
+        prior = [{"type": "explanation", "title": "old", "content": "old",
+                  "kp_id": "kp-old", "difficulty": 1}]
+        state = make_state({
+            "knowledge_units": [KnowledgeUnit(
+                id="kp-1", name="k", description="d", difficulty=2,
+            ).model_dump()],
+            "generated_resources": prior,
+        })
+
+        original = graph_mod._graph_ctx.designer
+        graph_mod._graph_ctx.designer = self._designer_with(["explanation"])
+        try:
+            update = await graph_mod.designer_node(state)
+        finally:
+            graph_mod._graph_ctx.designer = original
+
+        assert len(update["generated_resources"]) == 1, (
+            f"designer_node returned {len(update['generated_resources'])} "
+            f"resources; it must return only its own delta (1), or the append "
+            f"reducer duplicates the previous round on every retry"
+        )
+        assert update["generated_resources"][0]["kp_id"] == "kp-1"
+
+
+class TestAssessmentNodeResolvesTerminalStatus:
+    """``assessment_node``'s status whitelist: only *terminal* prior statuses survive.
+
+    A successful assessment resolves ``overall_status`` to ``"completed"`` —
+    ``create_initial_state`` starts the run at ``"running"``, and preserving
+    that left every consumer (SSE ``workflow_complete``, ``GET /status``)
+    reporting a finished run as still in progress.  Only ``failed`` /
+    ``degraded`` / ``cancelled`` may be carried through.
+
+    The API-level test explicitly disclaimed this ("covered properly by the
+    graph-level tests") but no such test existed — the whitelist mutant survived
+    until this one was added.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("prior", ["running", "", "processing", "unknown"])
+    async def test_non_terminal_prior_status_becomes_completed(self, prior) -> None:
+        from src.agents.models import AssessmentOutput, KnowledgeUnit
+        from src.agents.orchestrator import graph as graph_mod
+        from src.harness.types import ExecutionReport
+
+        class _Assessment:
+            async def execute(self, _i):
+                return ExecutionReport(
+                    agent_name="assessment", success=True, duration_ms=1.0,
+                    output=AssessmentOutput(confidence=0.8),
+                )
+
+        state = make_state({
+            "overall_status": prior,
+            "knowledge_units": [KnowledgeUnit(
+                id="kp-1", name="k", description="d", difficulty=2,
+            ).model_dump()],
+        })
+
+        original = graph_mod._graph_ctx.assessment
+        graph_mod._graph_ctx.assessment = _Assessment()
+        try:
+            update = await graph_mod.assessment_node(state)
+        finally:
+            graph_mod._graph_ctx.assessment = original
+
+        assert update["overall_status"] == "completed", (
+            f"prior status {prior!r} is not terminal and must resolve to "
+            f"'completed'; got {update['overall_status']!r}"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("terminal", ["failed", "degraded", "cancelled"])
+    async def test_terminal_prior_status_is_preserved(self, terminal) -> None:
+        """A real failure must not be upgraded to 'completed' by a later success."""
+        from src.agents.models import AssessmentOutput, KnowledgeUnit
+        from src.agents.orchestrator import graph as graph_mod
+        from src.harness.types import ExecutionReport
+
+        class _Assessment:
+            async def execute(self, _i):
+                return ExecutionReport(
+                    agent_name="assessment", success=True, duration_ms=1.0,
+                    output=AssessmentOutput(confidence=0.8),
+                )
+
+        state = make_state({
+            "overall_status": terminal,
+            "knowledge_units": [KnowledgeUnit(
+                id="kp-1", name="k", description="d", difficulty=2,
+            ).model_dump()],
+        })
+
+        original = graph_mod._graph_ctx.assessment
+        graph_mod._graph_ctx.assessment = _Assessment()
+        try:
+            update = await graph_mod.assessment_node(state)
+        finally:
+            graph_mod._graph_ctx.assessment = original
+
+        assert update["overall_status"] == terminal

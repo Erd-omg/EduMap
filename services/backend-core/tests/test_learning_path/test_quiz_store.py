@@ -110,11 +110,21 @@ class TestQuizStoreOnRedis:
         assert asyncio.run(scenario()) is None
 
     def test_questions_are_gone_from_redis_after_consume(self):
-        """Burning must delete the payload, not merely hide it.
+        """Burning must leave no answer key reachable under the quiz key.
 
-        ``getdel`` is what makes this true; a ``get`` + tombstone leaves the
-        answer key in Redis for the whole TTL, reachable by anything that can
-        read the key — including a replay that bypasses the tombstone check.
+        NOTE ON SCOPE: this asserts the *end state* after ``consume`` returns —
+        the key holds the tombstone, not the questions.  It cannot distinguish
+        ``getdel`` from ``get`` at the call site, because ``_arm_tombstone``
+        overwrites the payload either way; the mutation that swaps them is
+        therefore annotated equivalent in ``scripts/mutation_check.py``.
+
+        The property ``getdel`` actually buys is atomicity: with ``get`` the
+        payload survives for the duration between the read and the tombstone
+        write.  No test here can observe that window — ``fakeredis`` is
+        in-process and its commands are not coroutines, so they never yield and
+        ``gather`` cannot interleave them (verified by running the
+        ``getdel``/``get`` pair under ``asyncio.gather``).  A real-Redis
+        integration test would be needed.
         """
 
         async def scenario():
