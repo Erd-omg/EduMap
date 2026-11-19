@@ -428,10 +428,28 @@ app = FastAPI(
     dependencies=[Depends(verify_api_key)] if settings.api_key else [],
 )
 
+# The browser's origin is *its* address for this server, not the server's own
+# loopback: on a LAN deployment people open http://192.168.x.y:3000, and a
+# regex that only lists localhost/127.0.0.1 rejects every request with a CORS
+# error that looks like "the backend is down".  ``CORS_ORIGIN_REGEX``
+# (comma-separated patterns) is appended for whatever the LAN range is; default
+# adds private IPv4 ranges and ``*.local`` (mDNS), which are not routable from
+# the public internet.
+_LAN_ORIGIN_DEFAULT = (
+    r"^https?://("
+    r"localhost|127\.0\.0\.1"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r"|[A-Za-z0-9-]+\.local"
+    r")(:\d+)?$"
+)
+_extra_origin_patterns = [p for p in settings.cors_origin_regex.split(",") if p.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[],  # Set via CORS_ORIGINS env var; empty means follow allow_origin_regex
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origins=[],
+    allow_origin_regex="|".join([_LAN_ORIGIN_DEFAULT, *_extra_origin_patterns]),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

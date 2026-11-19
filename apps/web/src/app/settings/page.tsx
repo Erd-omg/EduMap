@@ -4,8 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { getUserId } from '@/lib/user-id';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
-const PROFILE_BASE = process.env.NEXT_PUBLIC_PROFILE_BASE || API_BASE;
+import { API_BASE, PROFILE_BASE } from '@/lib/api-base';
 
 export default function SettingsPage() {
   const [displayName, setDisplayName] = useState('');

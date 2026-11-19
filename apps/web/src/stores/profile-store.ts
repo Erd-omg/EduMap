@@ -2,9 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { UserProfile } from '@edumap/shared-types';
 import { getUserId } from '@/lib/user-id';
+import { PROFILE_BASE } from '@/lib/api-base';
 
-const PROFILE_BASE =
-  process.env.NEXT_PUBLIC_PROFILE_BASE || 'http://localhost:8001';
 const SYNC_TIMEOUT_MS = 5000;
 
 interface ConversationMessage {

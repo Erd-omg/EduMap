@@ -7,6 +7,7 @@ import { renderEdges, highlightPath, resetEdgeHighlights, type EdgeData } from '
 import { renderMinimap } from './minimap';
 import { ViewControls, type GraphLayout } from './view-controls';
 import { GraphTooltip, type TooltipData } from './graph-tooltip';
+import { API_BASE } from '@/lib/api-base';
 
 export type KpMastery = 'mastered' | 'learning' | 'not_started' | 'locked';
 
@@ -57,7 +58,6 @@ export function SkillTreeCanvas({
   const [tooltip, setTooltip] = useState<{ data: TooltipData; pos: { x: number; y: number } } | null>(null);
 
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
   // === Fetch graph data ===
   useEffect(() => {

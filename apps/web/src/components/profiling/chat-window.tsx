@@ -13,7 +13,7 @@ import { SourcePanel } from '@/components/mentor/source-panel';
 import { Badge, Card, CardContent } from '@/components/ui';
 import type { UserProfile } from '@edumap/shared-types';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+import { API_BASE } from '@/lib/api-base';
 
 export function ChatWindow() {
   const [historyOpen, setHistoryOpen] = useState(false);

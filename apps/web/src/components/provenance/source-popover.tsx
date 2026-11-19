@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import type { MentorSource } from '@/stores/chat-store';
 import { CitedPassage } from './cited-passage';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+import { API_BASE } from '@/lib/api-base';
 
 const PANEL_WIDTH = 288; // w-72
 

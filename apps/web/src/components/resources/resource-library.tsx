@@ -31,7 +31,7 @@ type ResourceFilter = 'all' | 'upload' | 'explanation' | 'exercise' | 'visualiza
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+import { API_BASE } from '@/lib/api-base';
 
 const TYPE_LABELS: Record<string, string> = {
   all: '全部',
