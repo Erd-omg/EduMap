@@ -132,15 +132,26 @@ class TestCs301CorpusIntegrity:
     """
 
     def _seeded_ids(self) -> set[str]:
-        import re
+        """The KP ids the seed script will create, read from the seed itself.
+
+        Imports ``_KPS`` rather than regex-scraping the script's source: the
+        regex form broke on any reformatting and could silently yield an empty
+        set (turning ``seeded <= used`` into a tautology).  Importing pins the
+        data, not the text.
+        """
+        import importlib.util
         from pathlib import Path
 
-        src = (Path(__file__).resolve().parents[2] / "scripts" / "seed_cs301.py").read_text()
-        return set(re.findall(r'\("(kp-os-[a-z]+)"', src))
+        path = Path(__file__).resolve().parents[2] / "scripts" / "seed_cs301.py"
+        spec = importlib.util.spec_from_file_location("seed_cs301", path)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return {k[0] for k in module._KPS}
 
     def test_every_label_exists_in_the_course_seed(self) -> None:
         seeded = self._seeded_ids()
-        assert seeded, "failed to parse any KP ids out of the cs301 seed"
+        assert seeded, "seed_cs301.py defines no KPs — _KPS is empty"
         used = {rid for q in load_expanded_queries("cs301") for rid in q["relevant_ids"]}
         assert used <= seeded, f"corpus references unseeded KPs: {sorted(used - seeded)}"
 
@@ -195,26 +206,61 @@ class TestCourseScopesEveryLoader:
         )
 
     def test_eval_scripts_accept_a_course_flag(self) -> None:
-        """Every benchmark entry point that loads a corpus must expose it.
+        """Every benchmark entry point that loads a corpus must expose --course.
 
-        Source-level by necessity: this asserts a CLI surface, not a runtime
-        call, and there is no cheap way to invoke four scripts end to end.
+        Inspected via ``ast`` rather than substring search.  A text search
+        passes on a mention in a comment or docstring and says nothing about
+        the call's shape; the AST sees an actual ``add_argument("--course")``
+        call and an actual call expression receiving ``args.course``.
         """
+        import ast
         import pathlib
-        import re
 
         scripts = pathlib.Path(__file__).resolve().parents[2] / "scripts"
+        # Calls that merely *report* the course are not forwarding it.
+        logging_calls = {"info", "error", "warning", "debug", "print"}
+
         for name in (
             "run_fusion_ablation.py",
             "run_rag_benchmark.py",
             "run_reranker_ablation.py",
             "run_strategy_comparison.py",
         ):
-            src = (scripts / name).read_text(encoding="utf-8")
-            assert '--course' in src, f"{name} loads a corpus but has no --course"
+            tree = ast.parse((scripts / name).read_text(encoding="utf-8"))
+
+            flags = {
+                n.args[0].value
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "add_argument"
+                and n.args
+                and isinstance(n.args[0], ast.Constant)
+            }
+            assert "--course" in flags, f"{name} loads a corpus but has no --course"
+
             # ...and actually forwards it, rather than accepting and ignoring.
-            assert re.search(r"loader\(args\.course\)|_queries\(args\.course\)", src), (
-                f"{name} declares --course but never passes it to the loader"
+            forwarded = []
+            for call in ast.walk(tree):
+                if not isinstance(call, ast.Call):
+                    continue
+                fname = (
+                    call.func.attr if isinstance(call.func, ast.Attribute)
+                    else getattr(call.func, "id", None)
+                )
+                if fname in logging_calls:
+                    continue
+                if any(
+                    isinstance(a, ast.Attribute)
+                    and isinstance(a.value, ast.Name)
+                    and a.value.id == "args"
+                    and a.attr == "course"
+                    for a in call.args
+                ):
+                    forwarded.append(fname or "<call>")
+            assert forwarded, (
+                f"{name} declares --course but never passes args.course to a "
+                f"loader (only logging/reporting calls counted)"
             )
 
 

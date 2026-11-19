@@ -252,11 +252,20 @@ def _saver_with_threads(
     class _DispatchingPool:
         def connection(self):
             cursor = AsyncMock()
+            # Explicit, so a fetch-before-execute fails loudly instead of
+            # reading an AsyncMock auto-attribute and silently choosing a
+            # dataset.
+            cursor._last_sql = None
 
             async def _execute(sql, params=None):
                 cursor._last_sql = sql
 
             async def _fetchall():
+                if cursor._last_sql is None:
+                    raise AssertionError(
+                        "fetchall() before execute() — the fake cannot tell "
+                        "which query to answer"
+                    )
                 return ids_rows if "DISTINCT thread_id" in cursor._last_sql else ts_rows
 
             cursor.execute = AsyncMock(side_effect=_execute)
